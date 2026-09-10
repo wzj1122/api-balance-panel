@@ -1,0 +1,14 @@
+node_modules/
+out/
+dist/
+logs/
+*.log
+*.corrupt-*.json
+config.json
+config.json.bak
+config.json.tmp
+snapshots.json
+scripts/.tmp/
+scripts/.verify/
+.e2e-*/
+.DS_Store

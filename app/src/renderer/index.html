@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>API 余额面板</title>
+    <!-- 先给一个深色底，避免 Electron 白屏闪一下（与 variables.css 的 --bg-0 一致） -->
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: #0b0e13;
+        color: #e6ebf4;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

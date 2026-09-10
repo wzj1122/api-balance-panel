@@ -1,0 +1,27 @@
+# 依赖与构建产物（app/ 下已有更细的 .gitignore，这里是仓库根兜底）
+node_modules/
+dist/
+out/
+logs/
+*.log
+
+# 本地运行时垃圾（E2E 临时 profile 等）
+.e2e-*/
+
+# 验证脚本的编译产物
+scripts/.tmp/
+scripts/.verify/
+
+# 用户数据（若有人在 app 同目录运行过调试版）
+config.json
+config.json.bak
+config.json.tmp
+snapshots.json
+*.corrupt-*.json
+
+# 开发过程日志（含对话过程细节，公开仓库不推送；如需公开请删除本行）
+memory/
+
+# 系统文件
+.DS_Store
+Thumbs.db

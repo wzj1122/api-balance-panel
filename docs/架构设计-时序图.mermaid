@@ -1,0 +1,146 @@
+%% API 余额监控面板 —— 关键流程时序图（3 张）
+%% 来源：docs/架构设计.md 第 5 节
+
+%% ============ ① 应用启动 → 首屏数据加载 ============
+sequenceDiagram
+    autonumber
+    actor U as 用户
+    participant M as main/index.ts
+    participant P as paths.ts
+    participant S as Store
+    participant C as Crypto
+    participant W as BrowserWindow
+    participant PR as preload
+    participant V as App.vue
+    participant IP as ipc.ts(handle)
+    participant Q as QueryService
+    participant SC as Scheduler
+
+    U->>M: 运行 npm run dev / 启动应用
+    M->>M: app.whenReady + 单实例锁 + setAppUserModelId(Windows)
+    M->>P: ensureDirs()
+    P-->>M: DATA_DIR / config.json / snapshots.json / logs/
+    M->>S: load()
+    S->>S: 读 config.json
+    alt JSON 解析失败或结构非法
+        S->>S: 尝试 config.json.bak
+        S->>S: 重命名损坏文件为 config.corrupt-ts.json
+        S-->>M: 默认配置 + configStatus=recovered 或 reset
+    else 正常
+        S->>S: normalizeConfig() 逐字段兜底
+        S-->>M: config + configStatus=ok
+    end
+    M->>C: isSecure()
+    C-->>M: safeStorage.isEncryptionAvailable()
+    M->>W: createWindow(1100x760, min 900x600)
+    W->>PR: 加载 preload
+    PR->>PR: contextBridge.exposeInMainWorld('api', PanelApi)
+    W-->>V: 页面就绪(did-finish-load)
+    M->>IP: registerAll()
+    M->>SC: start(settings.refresh_seconds)
+
+    V->>IP: invoke app:info
+    IP-->>V: AppInfo(version, dataDir, secure, configStatus)
+    V->>IP: invoke settings:get
+    IP->>S: getSettings()
+    IP-->>V: Settings(refresh_seconds=300, ...)
+    V->>IP: invoke account:list
+    IP->>S: listAccounts() -> 脱敏
+    IP-->>V: AccountView[](含 sk-****1234)
+    V->>IP: invoke balance:refresh {ids: 全部启用}
+    IP->>Q: refreshAll(force=false)
+    Q->>S: 取账号 + getSecret() 解密明文
+    Q->>Q: runPool(并发 8, 单账号 15s 超时)
+    Q-->>IP: PanelPayload(rows)
+    IP-->>V: rows
+    V->>V: 渲染 SummaryBar + AccountCard 网格
+    V->>U: 首屏可见（状态行：更新于 HH:mm:ss · 每 5 分钟自动刷新）
+
+
+%% ============ ② 点击「刷新全部」→ 并发取数 → 写快照 → 回推界面 ============
+sequenceDiagram
+    autonumber
+    actor U as 用户
+    participant V as App.vue
+    participant IP as ipc.ts
+    participant Q as QueryService
+    participant S as Store
+    participant A as PROVIDERS[type]
+    participant H as http.ts
+    participant SN as SnapshotStore
+    participant N as Notifier
+
+    U->>V: 点击「刷新」
+    V->>V: 按钮禁用 + 文案改「刷新中」
+    V->>IP: invoke balance:refresh {force: true}
+    IP->>Q: refreshAll(force=true)
+    Q->>Q: cache.clear()
+    Q->>S: listAccounts() 过滤 enabled
+    Q->>S: getSecret(acc) 解密 -> 明文（仅内存）
+    loop 并发池，上限 8
+        Q->>A: adapter(account, secret, timeoutMs)
+        A->>H: request(url, method, headers, body)
+        H->>H: URL/Header 非 ASCII 预检
+        H-->>A: {status, text} 非 2xx 不抛
+        alt status != 200
+            A-->>Q: failResult(mapHttpStatus(status), text.slice(0,160))
+        else 200
+            A->>A: safeJson(text)
+            alt 解析失败
+                A-->>Q: failResult(BAD_JSON, text.slice(0,120))
+            else 解析成功
+                A->>A: dig() 取值 + num()×scale 换算
+                A-->>Q: okResult(remaining,total,used,unit,note,items)
+            end
+        end
+        Q-->>V: push balance:row（单条先行，卡片逐个更新）
+        Q->>N: check(row)
+        alt remaining 小于 threshold 且今日未提醒
+            N->>N: new Notification(标题/正文)
+            N->>S: bumpNotice(accountId)
+        end
+    end
+    Q->>SN: append(rows) 写快照（异步，不阻塞返回）
+    SN->>SN: prune(retentionDays) 裁剪过期
+    Q-->>IP: PanelPayload(rows, ts, refreshSeconds)
+    IP-->>V: rows
+    V->>V: 更新卡片 / 汇总条 / 失败数 / 状态行时间
+    V->>U: 按钮恢复，状态行显示「更新于 HH:mm:ss」
+    Note over V,Q: 单个账号失败只影响它自己那张卡片，其它卡片照常更新
+
+
+%% ============ ③ 保存账号 → 密钥加密落盘 ============
+sequenceDiagram
+    autonumber
+    actor U as 用户
+    participant D as AccountDialog.vue
+    participant V as App.vue / usePanel
+    participant IP as ipc.ts
+    participant S as Store
+    participant C as Crypto
+    participant Q as QueryService
+
+    U->>D: 填名称/选平台/粘密钥 → 点「保存」
+    D->>D: 按 PROVIDER_META 校验必填（缺失则行内红字提示）
+    D->>V: submit(AccountInput)
+    V->>IP: invoke account:save
+    IP->>IP: validateAccountInput（type 必须在 PROVIDERS 中）
+    IP->>S: saveAccount(input)
+    S->>C: encrypt(secret)
+    alt safeStorage 可用
+        C->>C: safeStorage.encryptString(secret) -> base64
+        C-->>S: scheme = safeStorage-v1
+    else 不可用（降级）
+        C->>C: obfuscate(secret) base64 + XOR
+        C-->>S: scheme = obfuscate-v1
+    end
+    S->>S: secret_masked = maskSecret(secret)
+    S->>S: 写 config.json.tmp → rename 覆盖（原子写）
+    S->>S: 上一版另存为 config.json.bak
+    S-->>IP: Account（脱敏为 AccountView）
+    IP-->>V: AccountView
+    V->>V: 更新账号列表与卡片占位
+    V->>IP: invoke balance:refresh {ids:[newId], force:true}
+    IP->>Q: refreshOne(id)
+    Q-->>V: 新卡片立刻显示余额
+    V->>U: 弹窗关闭，卡片出现在网格中

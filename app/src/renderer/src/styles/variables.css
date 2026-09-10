@@ -1,0 +1,587 @@
+/**
+ * API 余额面板 · 设计系统（深色 / 浅色双主题）
+ *
+ * 浅色是默认（:root），深色通过 document.documentElement[data-theme="dark"] 覆盖。
+ * 尺寸/圆角/动效 token 两边共用，只有颜色按主题切换。
+ */
+:root,
+[data-theme='light'] {
+  color-scheme: light;
+  --bg-0: #eef1f7;
+  --bg-1: #f5f7fb;
+  --bg-2: #ffffff;
+  --panel: #ffffff;
+  --panel2: #edf1f7;
+  --card: #ffffff;
+  --card-hover: #f6f8fc;
+  --line: rgba(20, 30, 50, 0.09);
+  --line-strong: rgba(20, 30, 50, 0.16);
+  --line-soft: rgba(20, 30, 50, 0.05);
+  --tx: #263041;
+  --tx-strong: #101828;
+  --tx2: #55617a;
+  --tx3: #8a94a8;
+  --ok: #0f9d6a;
+  --ok-soft: rgba(15, 157, 106, 0.12);
+  --warn: #d7910a;
+  --warn-soft: rgba(215, 145, 10, 0.13);
+  --err: #dc3b3b;
+  --err-soft: rgba(220, 59, 59, 0.12);
+  --err-bg: #fdeeee;
+  --acc: #3b74f6;
+  --acc-2: #0aa6c9;
+  --acc-grad: linear-gradient(135deg, #3b74f6 0%, #0aa6c9 100%);
+  --acc-soft: rgba(59, 116, 246, 0.12);
+  /* 主按钮上的文字色（浅色主题用白字） */
+  --on-acc: #ffffff;
+  --bar-bg: rgba(255, 255, 255, 0.72);
+  --bar-bg-soft: rgba(255, 255, 255, 0.55);
+  --track: rgba(20, 30, 50, 0.1);
+  --scroll-thumb: rgba(20, 30, 50, 0.18);
+  --scroll-thumb-hover: rgba(20, 30, 50, 0.3);
+  --modal-bg: #ffffff;
+  --card-grad: #ffffff;
+  --shadow-sm: 0 2px 8px rgba(30, 41, 66, 0.08);
+  --shadow: 0 14px 40px rgba(30, 41, 66, 0.16);
+  --shadow-glow: 0 6px 22px rgba(59, 116, 246, 0.26);
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg-0: #0b0e13;
+  --bg-1: #0f1319;
+  --bg-2: #141a24;
+  --panel: #131823;
+  --panel2: #1b2230;
+  --card: #141a25;
+  --card-hover: #1a2231;
+  --line: rgba(255, 255, 255, 0.075);
+  --line-strong: rgba(255, 255, 255, 0.14);
+  --line-soft: rgba(255, 255, 255, 0.045);
+  --tx: #e6ebf4;
+  --tx-strong: #f8fafc;
+  --tx2: #96a2b6;
+  --tx3: #5c687c;
+  --ok: #34d399;
+  --ok-soft: rgba(52, 211, 153, 0.15);
+  --warn: #fbbf24;
+  --warn-soft: rgba(251, 191, 36, 0.15);
+  --err: #f87171;
+  --err-soft: rgba(248, 113, 113, 0.15);
+  --err-bg: #261a1d;
+  --acc: #4f8cff;
+  --acc-2: #22d3ee;
+  --acc-grad: linear-gradient(135deg, #4f8cff 0%, #22d3ee 100%);
+  --acc-soft: rgba(79, 140, 255, 0.14);
+  /* 深色主题主色偏亮，按钮文字用底色保证对比度 */
+  --on-acc: #0b0e13;
+  --bar-bg: rgba(15, 19, 25, 0.82);
+  --bar-bg-soft: rgba(15, 19, 25, 0.5);
+  --track: rgba(255, 255, 255, 0.07);
+  --scroll-thumb: rgba(255, 255, 255, 0.12);
+  --scroll-thumb-hover: rgba(255, 255, 255, 0.22);
+  --modal-bg: linear-gradient(180deg, #171e2c 0%, #12161f 100%);
+  --card-grad: linear-gradient(180deg, #171d29 0%, #141a25 100%);
+  --shadow-sm: 0 2px 10px rgba(0, 0, 0, 0.26);
+  --shadow: 0 14px 40px rgba(0, 0, 0, 0.42);
+  --shadow-glow: 0 6px 22px rgba(79, 140, 255, 0.28);
+}
+
+/* ---------- 平台品牌色（两主题共用，卡片点缀） ---------- */
+:root {
+  --p-deepseek: #4d8dff;
+  --p-siliconflow: #2dd4bf;
+  --p-newapi: #f5a623;
+  --p-custom: #8fa3bf;
+  --p-mimo: #ff7847;
+  --p-aliyun: #ff6a00;
+  --p-mimo-plan: #14b8a6;
+  --p-minimax: #a78bfa;
+  --p-zhipu: #3b82f6;
+
+  /* ---------- 尺寸与圆角 ---------- */
+  --radius: 16px;
+  --radius-sm: 10px;
+  --gap: 16px;
+  --pad: 20px;
+  --pad-lg: 24px;
+  --sidebar-w: 200px;
+  --topbar-h: 64px;
+
+  /* ---------- 字号 ---------- */
+  --fs-title: 17px;
+  --fs-big: 32px;
+  --fs-name: 15px;
+  --fs-sub: 13px;
+  --fs-foot: 12px;
+
+  /* ---------- 动效 ---------- */
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur: 0.18s;
+
+  /* ====== 兼容旧 token 名（防漏改导致样式打断） ====== */
+  --bg: var(--bg-1);
+  --panel-2: var(--bg-2);
+  --card-bg: var(--card);
+  --acc-hi: var(--acc-2);
+  --err-line: var(--err);
+  --fs-foot-sm: 11px;
+}
+
+
+/* ========== 设计师交付的 12 套主题（6 方向 × 浅/深） ========== */
+[data-theme="deep-space-dark"] {
+  --bg-0: #06080e;                                              /* 窗口最底层，带径向光晕的底色 */
+  --bg-1: #0b1020;                                              /* 内容区底色，正文对比度基准面 */
+  --bg-2: #1b2542;                                              /* 输入框聚焦态底色 */
+  --panel: #15203c;                                             /* 弹窗/浮层/下拉面板底色 */
+  --panel2: #1f2a4b;                                            /* 次级块、悬停底、标签底 */
+  --card: #121a32;                                              /* 余额卡片、表格首列底色 */
+  --card-hover: #192442;                                        /* 卡片/表格行悬停底色 */
+  --card-grad: linear-gradient(180deg, #141d37 0%, #121a32 100%); /* 卡片背景渐变（上亮下暗，轻微立体） */
+  --modal-bg: linear-gradient(180deg, #16203c 0%, #0f1628 100%);  /* 弹窗背景渐变 */
+  --line: rgba(140,170,255,0.10);                               /* 常规分隔线 */
+  --line-strong: rgba(150,180,255,0.22);                        /* 强调描边：悬停/聚焦 */
+  --line-soft: rgba(140,170,255,0.055);                         /* 极淡分隔：表格斑马纹 */
+  --tx: #c3cce4;                                                /* 正文（对 --bg-1 约 11.8:1）*/
+  --tx-strong: #f0f4ff;                                         /* 标题与关键数字（对 --bg-1 约 17.2:1）*/
+  --tx2: #8c99b8;                                               /* 次要说明（对 --bg-1 约 6.6:1）*/
+  --tx3: #5d6a88;                                               /* 弱化文字/占位符（对 --bg-1 约 3.5:1）*/
+  --ok: #3ddc97;                                                /* 成功/余额充足 */
+  --ok-soft: rgba(61,220,151,0.14);                             /* 成功态半透明底 */
+  --warn: #ffc857;                                              /* 警告/余额偏低 */
+  --warn-soft: rgba(255,200,87,0.14);                           /* 警告态半透明底 */
+  --err: #ff6b6b;                                               /* 异常/已欠费 */
+  --err-soft: rgba(255,107,107,0.14);                           /* 异常态半透明底 */
+  --err-bg: #2a1620;                                            /* 错误卡片整块底色 */
+  --acc: #5b8cff;                                               /* 主色：按钮/链接/进度/选中态 */
+  --acc-2: #22d3ee;                                             /* 辅助色：渐变第二色、次要高亮 */
+  --acc-grad: linear-gradient(135deg, #5b8cff 0%, #22d3ee 100%); /* 主渐变 */
+  --acc-soft: rgba(91,140,255,0.15);                            /* 主色 15% 透明底：选中态、信息条 */
+  --bar-bg: rgba(11,16,32,0.72);                                /* 标题栏/侧边栏（半透明，下有模糊） */
+  --bar-bg-soft: rgba(11,16,32,0.45);                           /* 更淡浮层底：表头、脚注 */
+  --track: rgba(140,170,255,0.10);                              /* 进度条/滑块轨道 */
+  --scroll-thumb: rgba(150,175,225,0.18);                       /* 滚动条滑块 */
+  --scroll-thumb-hover: rgba(150,175,225,0.32);                 /* 滚动条滑块悬停 */
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.35), 0 2px 8px rgba(0,0,0,0.25);              /* 卡片投影 */
+  --shadow: 0 16px 48px rgba(0,0,0,0.55), 0 2px 8px rgba(0,0,0,0.35);               /* 弹窗投影 */
+  --shadow-glow: 0 0 0 1px rgba(91,140,255,0.28), 0 8px 24px rgba(91,140,255,0.30); /* 主色发光 */
+}
+
+[data-theme="deep-space-light"] {
+  --bg-0: #e8eaf2;                                              /* 窗口最底层 */
+  --bg-1: #f1f3f9;                                              /* 内容区底色 */
+  --bg-2: #ffffff;                                              /* 输入框聚焦态底色 */
+  --panel: #fcfdff;                                             /* 弹窗/浮层底色 */
+  --panel2: #eaedf6;                                            /* 次级块、标签底 */
+  --card: #fbfcfe;                                              /* 卡片底色 */
+  --card-hover: #f5f7fd;                                        /* 卡片/行悬停底色 */
+  --card-grad: linear-gradient(180deg, #fdfeff 0%, #f7f9fd 100%); /* 卡片背景渐变 */
+  --modal-bg: #fcfdff;                                          /* 弹窗背景 */
+  --line: rgba(20,30,60,0.10);                                  /* 常规分隔线 */
+  --line-strong: rgba(20,30,60,0.18);                           /* 强调描边 */
+  --line-soft: rgba(20,30,60,0.05);                             /* 极淡分隔（斑马纹） */
+  --tx: #2a3350;                                                /* 正文（对 --bg-1 约 11.2:1）*/
+  --tx-strong: #10162b;                                         /* 标题与关键数字（对 --bg-1 约 16.2:1）*/
+  --tx2: #545e80;                                               /* 次要说明（对 --bg-1 约 5.8:1）*/
+  --tx3: #7c86a6;                                               /* 弱化文字/占位符（对 --bg-1 约 3.3:1）*/
+  --ok: #0e9f6e;                                                /* 成功 */
+  --ok-soft: rgba(14,159,110,0.12);                             /* 成功态半透明底 */
+  --warn: #b8790a;                                              /* 警告（浅底降饱和保对比度） */
+  --warn-soft: rgba(184,121,10,0.12);                           /* 警告态半透明底 */
+  --err: #d33535;                                               /* 异常 */
+  --err-soft: rgba(211,53,53,0.12);                             /* 异常态半透明底 */
+  --err-bg: #fdeeee;                                            /* 错误卡片整块底色 */
+  --acc: #3d6df0;                                               /* 主色 */
+  --acc-2: #0891b2;                                             /* 辅助色 */
+  --acc-grad: linear-gradient(135deg, #3d6df0 0%, #0891b2 100%); /* 主渐变 */
+  --acc-soft: rgba(61,109,240,0.13);                            /* 主色 13% 透明底 */
+  --bar-bg: rgba(248,250,253,0.72);                             /* 标题栏/侧边栏半透明底 */
+  --bar-bg-soft: rgba(248,250,253,0.55);                        /* 表头/脚注浮层底 */
+  --track: rgba(20,30,60,0.10);                                 /* 进度条轨道 */
+  --scroll-thumb: rgba(30,45,80,0.18);                          /* 滚动条滑块 */
+  --scroll-thumb-hover: rgba(30,45,80,0.30);                    /* 滚动条悬停 */
+  --shadow-sm: 0 1px 2px rgba(20,30,60,0.06), 0 2px 8px rgba(20,30,60,0.05);              /* 卡片投影 */
+  --shadow: 0 16px 40px rgba(20,30,60,0.14), 0 2px 8px rgba(20,30,60,0.08);               /* 弹窗投影 */
+  --shadow-glow: 0 0 0 1px rgba(61,109,240,0.25), 0 8px 20px rgba(61,109,240,0.22);       /* 主色发光 */
+}
+
+[data-theme="fluent-acrylic-light"] {
+  --bg-0: #eef0f4;                                              /* 窗口最底层（云母底纹承载面） */
+  --bg-1: #f5f6f9;                                              /* 内容区底色 */
+  --bg-2: #ffffff;                                              /* 输入框聚焦态底色 */
+  --panel: #fbfcfd;                                             /* 弹窗/浮层（亚克力层） */
+  --panel2: #edeff5;                                            /* 次级块、标签底 */
+  --card: #fafbfc;                                              /* 卡片底色 */
+  --card-hover: #f2f4f8;                                        /* 卡片/行悬停底色 */
+  --card-grad: linear-gradient(180deg, #fcfdfe 0%, #f6f8fa 100%); /* 卡片背景渐变 */
+  --modal-bg: linear-gradient(180deg, #fdfefe 0%, #f4f6f9 100%);  /* 弹窗背景渐变 */
+  --line: rgba(16,24,40,0.08);                                  /* 常规分隔线 */
+  --line-strong: rgba(16,24,40,0.16);                           /* 强调描边 */
+  --line-soft: rgba(16,24,40,0.045);                            /* 极淡分隔（斑马纹） */
+  --tx: #2b2f3a;                                                /* 正文（对 --bg-1 约 12.4:1）*/
+  --tx-strong: #14171f;                                         /* 标题与关键数字（对 --bg-1 约 16.6:1）*/
+  --tx2: #565c6b;                                               /* 次要说明（对 --bg-1 约 6.2:1）*/
+  --tx3: #7d838f;                                               /* 弱化文字/占位符（对 --bg-1 约 3.5:1）*/
+  --ok: #0e9a63;                                                /* 成功 */
+  --ok-soft: rgba(14,154,99,0.12);                              /* 成功态半透明底 */
+  --warn: #a9700a;                                              /* 警告 */
+  --warn-soft: rgba(169,112,10,0.12);                           /* 警告态半透明底 */
+  --err: #c9262f;                                               /* 异常 */
+  --err-soft: rgba(201,38,47,0.12);                             /* 异常态半透明底 */
+  --err-bg: #fdf0f0;                                            /* 错误卡片整块底色 */
+  --acc: #0f6cbd;                                               /* 主色（Fluent 招牌蓝） */
+  --acc-2: #4ea3e8;                                             /* 辅助色 */
+  --acc-grad: linear-gradient(135deg, #0f6cbd 0%, #4ea3e8 100%); /* 主渐变 */
+  --acc-soft: rgba(15,108,189,0.12);                            /* 主色 12% 透明底 */
+  --bar-bg: rgba(252,252,253,0.72);                             /* 标题栏/侧边栏半透明底 */
+  --bar-bg-soft: rgba(250,251,252,0.55);                        /* 表头/脚注浮层底 */
+  --track: rgba(16,24,40,0.08);                                 /* 进度条轨道 */
+  --scroll-thumb: rgba(16,24,40,0.16);                          /* 滚动条滑块 */
+  --scroll-thumb-hover: rgba(16,24,40,0.28);                    /* 滚动条悬停 */
+  --shadow-sm: 0 1px 2px rgba(16,24,40,0.06), 0 2px 8px rgba(16,24,40,0.05);      /* 卡片投影 */
+  --shadow: 0 16px 40px rgba(16,24,40,0.14), 0 2px 8px rgba(16,24,40,0.08);       /* 弹窗投影 */
+  --shadow-glow: 0 0 0 1px rgba(15,108,189,0.22), 0 8px 20px rgba(15,108,189,0.20); /* 主色发光 */
+}
+
+[data-theme="fluent-acrylic-dark"] {
+  --bg-0: #111317;                                              /* 窗口最底层 */
+  --bg-1: #1b1e24;                                              /* 内容区底色 */
+  --bg-2: #303741;                                              /* 输入框聚焦态底色 */
+  --panel: #2b303a;                                             /* 弹窗/浮层（亚克力层） */
+  --panel2: #363c48;                                            /* 次级块、标签底 */
+  --card: #252a32;                                              /* 卡片底色 */
+  --card-hover: #2f353f;                                        /* 卡片/行悬停底色 */
+  --card-grad: linear-gradient(180deg, #24282f 0%, #1f232a 100%); /* 卡片背景渐变 */
+  --modal-bg: linear-gradient(180deg, #262a33 0%, #1c1f25 100%);  /* 弹窗背景渐变 */
+  --line: rgba(255,255,255,0.09);                               /* 常规分隔线 */
+  --line-strong: rgba(255,255,255,0.16);                        /* 强调描边 */
+  --line-soft: rgba(255,255,255,0.05);                          /* 极淡分隔（斑马纹） */
+  --tx: #d6dae1;                                                /* 正文（对 --bg-1 约 11.9:1）*/
+  --tx-strong: #f7f8fa;                                         /* 标题与关键数字（对 --bg-1 约 15.7:1）*/
+  --tx2: #9aa0ab;                                               /* 次要说明（对 --bg-1 约 6.4:1）*/
+  --tx3: #6e747f;                                               /* 弱化文字/占位符（对 --bg-1 约 3.6:1）*/
+  --ok: #4cc38a;                                                /* 成功 */
+  --ok-soft: rgba(76,195,138,0.14);                             /* 成功态半透明底 */
+  --warn: #f0c069;                                              /* 警告 */
+  --warn-soft: rgba(240,192,105,0.14);                          /* 警告态半透明底 */
+  --err: #f1707b;                                               /* 异常 */
+  --err-soft: rgba(241,112,123,0.14);                           /* 异常态半透明底 */
+  --err-bg: #2c1e21;                                            /* 错误卡片整块底色 */
+  --acc: #4cb0ff;                                               /* 主色 */
+  --acc-2: #6fd3ff;                                             /* 辅助色 */
+  --acc-grad: linear-gradient(135deg, #4cb0ff 0%, #6fd3ff 100%); /* 主渐变 */
+  --acc-soft: rgba(76,176,255,0.15);                            /* 主色 15% 透明底 */
+  --bar-bg: rgba(27,30,36,0.72);                                /* 标题栏/侧边栏半透明底 */
+  --bar-bg-soft: rgba(27,30,36,0.45);                           /* 表头/脚注浮层底 */
+  --track: rgba(255,255,255,0.09);                              /* 进度条轨道 */
+  --scroll-thumb: rgba(255,255,255,0.14);                       /* 滚动条滑块 */
+  --scroll-thumb-hover: rgba(255,255,255,0.24);                 /* 滚动条悬停 */
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.30), 0 2px 8px rgba(0,0,0,0.24);            /* 卡片投影 */
+  --shadow: 0 16px 44px rgba(0,0,0,0.50), 0 2px 8px rgba(0,0,0,0.32);             /* 弹窗投影 */
+  --shadow-glow: 0 0 0 1px rgba(76,176,255,0.26), 0 8px 22px rgba(76,176,255,0.26); /* 主色发光 */
+}
+
+[data-theme="soft-pastel-light"] {
+  --bg-0: #f2eff7;                                              /* 窗口最底层（淡紫雾底） */
+  --bg-1: #f8f6fb;                                              /* 内容区底色 */
+  --bg-2: #ffffff;                                              /* 输入框聚焦态底色 */
+  --panel: #fdfcff;                                             /* 弹窗/浮层底色 */
+  --panel2: #f1eef8;                                            /* 次级块、标签底 */
+  --card: #fdfcff;                                              /* 卡片底色 */
+  --card-hover: #f4f1f9;                                        /* 卡片/行悬停底色 */
+  --card-grad: linear-gradient(180deg, #fefdff 0%, #f8f5fc 100%); /* 卡片背景渐变 */
+  --modal-bg: linear-gradient(180deg, #fdfcff 0%, #f5f2fa 100%);  /* 弹窗背景渐变 */
+  --line: rgba(60,45,90,0.09);                                  /* 常规分隔线 */
+  --line-strong: rgba(60,45,90,0.17);                           /* 强调描边 */
+  --line-soft: rgba(60,45,90,0.05);                             /* 极淡分隔（斑马纹） */
+  --tx: #3a3450;                                                /* 正文（对 --bg-1 约 10.9:1）*/
+  --tx-strong: #221c35;                                         /* 标题与关键数字（对 --bg-1 约 15.2:1）*/
+  --tx2: #5f5878;                                               /* 次要说明（对 --bg-1 约 6.2:1）*/
+  --tx3: #847d9c;                                               /* 弱化文字/占位符（对 --bg-1 约 3.6:1）*/
+  --ok: #2b9a72;                                                /* 成功 */
+  --ok-soft: rgba(43,154,114,0.12);                             /* 成功态半透明底 */
+  --warn: #a96f0c;                                              /* 警告 */
+  --warn-soft: rgba(169,111,12,0.12);                           /* 警告态半透明底 */
+  --err: #d2455c;                                               /* 异常 */
+  --err-soft: rgba(210,69,92,0.12);                             /* 异常态半透明底 */
+  --err-bg: #fdeff1;                                            /* 错误卡片整块底色 */
+  --acc: #6f5ce0;                                               /* 主色（薰衣草紫，浅底加深保对比度） */
+  --acc-2: #e0799f;                                             /* 辅助色（柔粉） */
+  --acc-grad: linear-gradient(135deg, #6f5ce0 0%, #e0799f 100%); /* 主渐变 */
+  --acc-soft: rgba(111,92,224,0.13);                           /* 主色 13% 透明底 */
+  --bar-bg: rgba(250,249,252,0.72);                             /* 标题栏/侧边栏半透明底 */
+  --bar-bg-soft: rgba(250,249,252,0.55);                        /* 表头/脚注浮层底 */
+  --track: rgba(60,45,90,0.09);                                 /* 进度条轨道 */
+  --scroll-thumb: rgba(60,45,90,0.16);                          /* 滚动条滑块 */
+  --scroll-thumb-hover: rgba(60,45,90,0.28);                    /* 滚动条悬停 */
+  --shadow-sm: 0 1px 2px rgba(60,45,90,0.06), 0 2px 8px rgba(60,45,90,0.05);       /* 卡片投影 */
+  --shadow: 0 16px 40px rgba(60,45,90,0.13), 0 2px 8px rgba(60,45,90,0.07);        /* 弹窗投影 */
+  --shadow-glow: 0 0 0 1px rgba(122,104,232,0.24), 0 8px 20px rgba(224,121,159,0.26); /* 主色发光（紫粉叠加） */
+}
+
+[data-theme="soft-pastel-dark"] {
+  --bg-0: #120f19;                                              /* 窗口最底层 */
+  --bg-1: #1c1926;                                              /* 内容区底色 */
+  --bg-2: #352d44;                                              /* 输入框聚焦态底色 */
+  --panel: #2e273e;                                             /* 弹窗/浮层底色 */
+  --panel2: #3a334a;                                            /* 次级块、标签底 */
+  --card: #272335;                                              /* 卡片底色 */
+  --card-hover: #332d42;                                        /* 卡片/行悬停底色 */
+  --card-grad: linear-gradient(180deg, #262133 0%, #201c2b 100%); /* 卡片背景渐变 */
+  --modal-bg: linear-gradient(180deg, #272137 0%, #1b1825 100%);  /* 弹窗背景渐变 */
+  --line: rgba(230,220,255,0.09);                               /* 常规分隔线 */
+  --line-strong: rgba(230,220,255,0.17);                        /* 强调描边 */
+  --line-soft: rgba(230,220,255,0.05);                          /* 极淡分隔（斑马纹） */
+  --tx: #ded9ec;                                                /* 正文（对 --bg-1 约 12.5:1）*/
+  --tx-strong: #f6f3ff;                                         /* 标题与关键数字（对 --bg-1 约 15.8:1）*/
+  --tx2: #a79fc0;                                               /* 次要说明（对 --bg-1 约 6.9:1）*/
+  --tx3: #7a7290;                                               /* 弱化文字/占位符（对 --bg-1 约 3.8:1）*/
+  --ok: #6bd9ae;                                                /* 成功 */
+  --ok-soft: rgba(107,217,174,0.14);                            /* 成功态半透明底 */
+  --warn: #f3ce7c;                                              /* 警告 */
+  --warn-soft: rgba(243,206,124,0.14);                          /* 警告态半透明底 */
+  --err: #f79ab0;                                               /* 异常 */
+  --err-soft: rgba(247,154,176,0.14);                           /* 异常态半透明底 */
+  --err-bg: #2e1e26;                                            /* 错误卡片整块底色 */
+  --acc: #a99bff;                                               /* 主色（薰衣草紫） */
+  --acc-2: #f7a8cb;                                             /* 辅助色（柔粉） */
+  --acc-grad: linear-gradient(135deg, #a99bff 0%, #f7a8cb 100%); /* 主渐变 */
+  --acc-soft: rgba(169,155,255,0.16);                           /* 主色 16% 透明底 */
+  --bar-bg: rgba(28,25,38,0.72);                                /* 标题栏/侧边栏半透明底 */
+  --bar-bg-soft: rgba(28,25,38,0.45);                           /* 表头/脚注浮层底 */
+  --track: rgba(230,220,255,0.10);                              /* 进度条轨道 */
+  --scroll-thumb: rgba(230,220,255,0.15);                       /* 滚动条滑块 */
+  --scroll-thumb-hover: rgba(230,220,255,0.26);                 /* 滚动条悬停 */
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.30), 0 2px 8px rgba(0,0,0,0.24);              /* 卡片投影 */
+  --shadow: 0 16px 44px rgba(0,0,0,0.50), 0 2px 8px rgba(0,0,0,0.32);               /* 弹窗投影 */
+  --shadow-glow: 0 0 0 1px rgba(169,155,255,0.28), 0 8px 22px rgba(169,155,255,0.28); /* 主色发光 */
+}
+
+[data-theme="editorial-mono-light"] {
+  --bg-0: #f1eee9;                                              /* 窗口最底层（纸张底） */
+  --bg-1: #f7f5f1;                                              /* 内容区底色 */
+  --bg-2: #ffffff;                                              /* 输入框聚焦态底色 */
+  --panel: #fcfbf8;                                             /* 弹窗/浮层底色 */
+  --panel2: #f2efe9;                                            /* 次级块、标签底 */
+  --card: #fcfbf8;                                              /* 卡片底色 */
+  --card-hover: #f2efea;                                        /* 卡片/行悬停底色 */
+  --card-grad: linear-gradient(180deg, #fdfcfa 0%, #f7f4ef 100%); /* 卡片背景渐变 */
+  --modal-bg: #fcfbf8;                                          /* 弹窗背景 */
+  --line: rgba(30,26,22,0.10);                                  /* 常规分隔线 */
+  --line-strong: rgba(30,26,22,0.20);                           /* 强调描边（等宽风硬朗描边） */
+  --line-soft: rgba(30,26,22,0.05);                             /* 极淡分隔（斑马纹） */
+  --tx: #2e2a26;                                                /* 正文（对 --bg-1 约 13.1:1）*/
+  --tx-strong: #17130f;                                         /* 标题与关键数字（对 --bg-1 约 17.0:1）*/
+  --tx2: #57514a;                                               /* 次要说明（对 --bg-1 约 7.2:1）*/
+  --tx3: #7e776d;                                               /* 弱化文字/占位符（对 --bg-1 约 4.1:1）*/
+  --ok: #1e7a55;                                                /* 成功 */
+  --ok-soft: rgba(30,122,85,0.12);                              /* 成功态半透明底 */
+  --warn: #96650a;                                              /* 警告 */
+  --warn-soft: rgba(150,101,10,0.12);                           /* 警告态半透明底 */
+  --err: #b33a2e;                                               /* 异常（朱红，不抢主色） */
+  --err-soft: rgba(179,58,46,0.12);                             /* 异常态半透明底 */
+  --err-bg: #fbf0ed;                                            /* 错误卡片整块底色 */
+  --acc: #26525f;                                               /* 主色（墨青） */
+  --acc-2: #6e8e86;                                             /* 辅助色（苔绿） */
+  --acc-grad: linear-gradient(135deg, #26525f 0%, #6e8e86 100%); /* 主渐变 */
+  --acc-soft: rgba(38,82,95,0.12);                              /* 主色 12% 透明底 */
+  --bar-bg: rgba(250,248,244,0.72);                             /* 标题栏/侧边栏半透明底 */
+  --bar-bg-soft: rgba(250,248,244,0.55);                        /* 表头/脚注浮层底 */
+  --track: rgba(30,26,22,0.10);                                 /* 进度条轨道 */
+  --scroll-thumb: rgba(30,26,22,0.18);                          /* 滚动条滑块 */
+  --scroll-thumb-hover: rgba(30,26,22,0.30);                    /* 滚动条悬停 */
+  --shadow-sm: 0 1px 2px rgba(30,26,22,0.06), 0 2px 6px rgba(30,26,22,0.05);   /* 卡片投影（硬边、无虚化堆叠） */
+  --shadow: 0 14px 32px rgba(30,26,22,0.16), 0 2px 6px rgba(30,26,22,0.08);    /* 弹窗投影 */
+  --shadow-glow: 0 0 0 1px rgba(38,82,95,0.30), 0 6px 16px rgba(38,82,95,0.18); /* 主色发光（克制） */
+}
+
+[data-theme="editorial-mono-dark"] {
+  --bg-0: #0b0a09;                                              /* 窗口最底层（暗室纸） */
+  --bg-1: #171614;                                              /* 内容区底色 */
+  --bg-2: #33302a;                                              /* 输入框聚焦态底色 */
+  --panel: #2c2b25;                                             /* 弹窗/浮层底色 */
+  --panel2: #3a3730;                                            /* 次级块、标签底 */
+  --card: #24231f;                                              /* 卡片底色 */
+  --card-hover: #353226;                                        /* 卡片/行悬停底色 */
+  --card-grad: linear-gradient(180deg, #201e1a 0%, #1a1916 100%); /* 卡片背景渐变 */
+  --modal-bg: linear-gradient(180deg, #221f1b 0%, #161512 100%);  /* 弹窗背景渐变 */
+  --line: rgba(238,230,215,0.09);                               /* 常规分隔线 */
+  --line-strong: rgba(238,230,215,0.18);                        /* 强调描边 */
+  --line-soft: rgba(238,230,215,0.05);                          /* 极淡分隔（斑马纹） */
+  --tx: #dcd7cd;                                                /* 正文（对 --bg-1 约 12.6:1）*/
+  --tx-strong: #f7f3ea;                                         /* 标题与关键数字（对 --bg-1 约 16.3:1）*/
+  --tx2: #9c968a;                                               /* 次要说明（对 --bg-1 约 6.2:1）*/
+  --tx3: #6e685e;                                               /* 弱化文字/占位符（对 --bg-1 约 3.3:1）*/
+  --ok: #6fbf95;                                                /* 成功 */
+  --ok-soft: rgba(111,191,149,0.14);                            /* 成功态半透明底 */
+  --warn: #e2b45f;                                              /* 警告 */
+  --warn-soft: rgba(226,180,95,0.14);                           /* 警告态半透明底 */
+  --err: #e37f6e;                                               /* 异常 */
+  --err-soft: rgba(227,127,110,0.14);                           /* 异常态半透明底 */
+  --err-bg: #2b1c19;                                            /* 错误卡片整块底色 */
+  --acc: #6fa8b5;                                               /* 主色（墨青提亮） */
+  --acc-2: #c0a88a;                                             /* 辅助色（暖砂） */
+  --acc-grad: linear-gradient(135deg, #6fa8b5 0%, #c0a88a 100%); /* 主渐变 */
+  --acc-soft: rgba(111,168,181,0.15);                           /* 主色 15% 透明底 */
+  --bar-bg: rgba(23,22,20,0.72);                                /* 标题栏/侧边栏半透明底 */
+  --bar-bg-soft: rgba(23,22,20,0.45);                           /* 表头/脚注浮层底 */
+  --track: rgba(238,230,215,0.10);                              /* 进度条轨道 */
+  --scroll-thumb: rgba(238,230,215,0.15);                       /* 滚动条滑块 */
+  --scroll-thumb-hover: rgba(238,230,215,0.26);                 /* 滚动条悬停 */
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.34), 0 2px 8px rgba(0,0,0,0.26);           /* 卡片投影 */
+  --shadow: 0 16px 44px rgba(0,0,0,0.52), 0 2px 8px rgba(0,0,0,0.34);            /* 弹窗投影 */
+  --shadow-glow: 0 0 0 1px rgba(111,168,181,0.28), 0 8px 20px rgba(111,168,181,0.22); /* 主色发光 */
+}
+
+[data-theme="scifi-3d-dark"] {
+  --bg-0: #080b14;                                              /* 窗口最底层（宇宙深底 + 径向光晕） */
+  --bg-1: #0e1424;                                              /* 内容区底色 */
+  --bg-2: #1d2747;                                              /* 输入框聚焦态底色 */
+  --panel: #1b243e;                                             /* 弹窗/浮层底色 */
+  --panel2: #232f4e;                                            /* 次级块、标签底 */
+  --card: #171e34;                                              /* 卡片底色 */
+  --card-hover: #1d2744;                                        /* 卡片/行悬停底色 */
+  --card-grad: linear-gradient(160deg, #1b2440 0%, #131a2c 55%, #0f1524 100%); /* 卡片渐变（斜向三段，制造立体斜面） */
+  --modal-bg: linear-gradient(165deg, #1b2544 0%, #111827 60%, #0c1120 100%);  /* 弹窗渐变（立体斜切） */
+  --line: rgba(120,200,255,0.12);                               /* 常规分隔线 */
+  --line-strong: rgba(120,200,255,0.28);                        /* 强调描边（发光边） */
+  --line-soft: rgba(120,200,255,0.06);                          /* 极淡分隔（斑马纹） */
+  --tx: #cbd8f0;                                                /* 正文（对 --bg-1 约 12.8:1）*/
+  --tx-strong: #f2f7ff;                                         /* 标题与关键数字（对 --bg-1 约 17.1:1）*/
+  --tx2: #93a6c9;                                               /* 次要说明（对 --bg-1 约 7.5:1）*/
+  --tx3: #61738f;                                               /* 弱化文字/占位符（对 --bg-1 约 3.8:1）*/
+  --ok: #2be8a5;                                                /* 成功（霓虹绿） */
+  --ok-soft: rgba(43,232,165,0.14);                             /* 成功态半透明底 */
+  --warn: #ffc24b;                                              /* 警告 */
+  --warn-soft: rgba(255,194,75,0.14);                           /* 警告态半透明底 */
+  --err: #ff5c7a;                                               /* 异常 */
+  --err-soft: rgba(255,92,122,0.14);                            /* 异常态半透明底 */
+  --err-bg: #2a1220;                                            /* 错误卡片整块底色 */
+  --acc: #00e0ff;                                               /* 主色（霓虹青） */
+  --acc-2: #7a5cff;                                             /* 辅助色（霓虹紫） */
+  --acc-grad: linear-gradient(135deg, #00e0ff 0%, #7a5cff 100%); /* 主渐变 */
+  --acc-soft: rgba(0,224,255,0.15);                             /* 主色 15% 透明底 */
+  --bar-bg: rgba(14,20,36,0.70);                                /* 标题栏/侧边栏半透明底 */
+  --bar-bg-soft: rgba(14,20,36,0.44);                           /* 表头/脚注浮层底 */
+  --track: rgba(120,200,255,0.12);                              /* 进度条轨道 */
+  --scroll-thumb: rgba(120,200,255,0.18);                       /* 滚动条滑块 */
+  --scroll-thumb-hover: rgba(120,200,255,0.32);                 /* 滚动条悬停 */
+  --shadow-sm: inset 0 1px 0 rgba(255,255,255,0.06), 0 2px 8px rgba(0,0,0,0.50);       /* 卡片投影（顶部高光 + 沉底） */
+  --shadow: 0 20px 56px rgba(0,0,0,0.60), 0 2px 8px rgba(0,0,0,0.40);                  /* 弹窗投影 */
+  --shadow-glow: 0 0 0 1px rgba(0,224,255,0.35), 0 8px 28px rgba(0,224,255,0.35);      /* 主色发光（霓虹） */
+}
+
+[data-theme="scifi-3d-light"] {
+  --bg-0: #e6ebf5;                                              /* 窗口最底层（亮面金属底） */
+  --bg-1: #eff3fa;                                              /* 内容区底色 */
+  --bg-2: #ffffff;                                              /* 输入框聚焦态底色 */
+  --panel: #fafcff;                                             /* 弹窗/浮层底色 */
+  --panel2: #e8edf8;                                            /* 次级块、标签底 */
+  --card: #f8fafe;                                              /* 卡片底色 */
+  --card-hover: #f1f5fd;                                        /* 卡片/行悬停底色 */
+  --card-grad: linear-gradient(155deg, #fdfeff 0%, #f4f7fd 55%, #eef3fb 100%); /* 卡片渐变（亮面斜切） */
+  --modal-bg: linear-gradient(160deg, #fdfeff 0%, #f2f6fd 60%, #e9eff9 100%);  /* 弹窗渐变 */
+  --line: rgba(20,40,80,0.10);                                  /* 常规分隔线 */
+  --line-strong: rgba(0,140,190,0.28);                          /* 强调描边（青色描边保留科幻感） */
+  --line-soft: rgba(20,40,80,0.05);                             /* 极淡分隔（斑马纹） */
+  --tx: #26324b;                                                /* 正文（对 --bg-1 约 11.5:1）*/
+  --tx-strong: #0f1826;                                         /* 标题与关键数字（对 --bg-1 约 16.0:1）*/
+  --tx2: #4f5f85;                                               /* 次要说明（对 --bg-1 约 5.7:1）*/
+  --tx3: #77839f;                                               /* 弱化文字/占位符（对 --bg-1 约 3.4:1）*/
+  --ok: #0b8f63;                                                /* 成功 */
+  --ok-soft: rgba(11,143,99,0.12);                              /* 成功态半透明底 */
+  --warn: #9a6a08;                                              /* 警告 */
+  --warn-soft: rgba(154,106,8,0.12);                            /* 警告态半透明底 */
+  --err: #d6415a;                                               /* 异常 */
+  --err-soft: rgba(214,65,90,0.12);                             /* 异常态半透明底 */
+  --err-bg: #fdeff2;                                            /* 错误卡片整块底色 */
+  --acc: #007a9c;                                               /* 主色（青，浅底加深保对比度） */
+  --acc-2: #5a4bd6;                                             /* 辅助色（紫） */
+  --acc-grad: linear-gradient(135deg, #007a9c 0%, #5a4bd6 100%); /* 主渐变 */
+  --acc-soft: rgba(0,122,156,0.13);                             /* 主色 13% 透明底 */
+  --bar-bg: rgba(247,250,254,0.72);                             /* 标题栏/侧边栏半透明底 */
+  --bar-bg-soft: rgba(247,250,254,0.55);                        /* 表头/脚注浮层底 */
+  --track: rgba(20,40,80,0.10);                                 /* 进度条轨道 */
+  --scroll-thumb: rgba(20,40,80,0.18);                          /* 滚动条滑块 */
+  --scroll-thumb-hover: rgba(20,40,80,0.30);                    /* 滚动条悬停 */
+  --shadow-sm: inset 0 1px 0 rgba(255,255,255,0.90), 0 2px 8px rgba(20,40,80,0.07);    /* 卡片投影（顶部高光） */
+  --shadow: 0 20px 44px rgba(20,40,80,0.16), 0 2px 8px rgba(20,40,80,0.08);            /* 弹窗投影 */
+  --shadow-glow: 0 0 0 1px rgba(0,145,184,0.30), 0 8px 22px rgba(0,145,184,0.26);      /* 主色发光 */
+}
+
+[data-theme="cute-bluepink-light"] {
+  --bg-0: #e9f0fc;                                              /* 窗口最底层（淡蓝天） */
+  --bg-1: #f4f8ff;                                              /* 内容区底色 */
+  --bg-2: #ffffff;                                              /* 输入框聚焦态底色 */
+  --panel: #fdffff;                                             /* 弹窗/浮层底色 */
+  --panel2: #eef4fe;                                            /* 次级块、标签底 */
+  --card: #fbfcff;                                              /* 卡片底色 */
+  --card-hover: #f0f5ff;                                        /* 卡片/行悬停底色 */
+  --card-grad: linear-gradient(180deg, #fdfeff 0%, #f6f9ff 100%); /* 卡片背景渐变 */
+  --modal-bg: linear-gradient(180deg, #fdfeff 0%, #f4f7fe 100%);  /* 弹窗背景渐变 */
+  --line: rgba(40,70,140,0.10);                                 /* 常规分隔线 */
+  --line-strong: rgba(40,70,140,0.18);                          /* 强调描边 */
+  --line-soft: rgba(40,70,140,0.05);                            /* 极淡分隔（斑马纹） */
+  --tx: #333c63;                                                /* 正文（对 --bg-1 约 10.0:1）*/
+  --tx-strong: #1a2145;                                         /* 标题与关键数字（对 --bg-1 约 14.6:1）*/
+  --tx2: #5b6890;                                               /* 次要说明（对 --bg-1 约 5.2:1）*/
+  --tx3: #7f8ab0;                                               /* 弱化文字/占位符（对 --bg-1 约 3.2:1）*/
+  --ok: #18976d;                                                /* 成功 */
+  --ok-soft: rgba(24,151,109,0.12);                             /* 成功态半透明底 */
+  --warn: #b07f10;                                              /* 警告 */
+  --warn-soft: rgba(176,127,16,0.12);                           /* 警告态半透明底 */
+  --err: #e0476f;                                               /* 异常（草莓红，与粉主色拉开距离） */
+  --err-soft: rgba(224,71,111,0.12);                            /* 异常态半透明底 */
+  --err-bg: #fdeff4;                                            /* 错误卡片整块底色 */
+  --acc: #3d68e6;                                               /* 主色（糖果蓝） */
+  --acc-2: #ff7fb0;                                             /* 辅助色（糖果粉） */
+  --acc-grad: linear-gradient(135deg, #3d68e6 0%, #ff7fb0 100%); /* 主渐变 */
+  --acc-soft: rgba(61,104,230,0.14);                            /* 主色 14% 透明底 */
+  --bar-bg: rgba(250,251,255,0.72);                             /* 标题栏/侧边栏半透明底 */
+  --bar-bg-soft: rgba(250,251,255,0.55);                        /* 表头/脚注浮层底 */
+  --track: rgba(40,70,140,0.10);                                /* 进度条轨道 */
+  --scroll-thumb: rgba(61,104,230,0.20);                        /* 滚动条滑块（带品牌色） */
+  --scroll-thumb-hover: rgba(61,104,230,0.34);                  /* 滚动条悬停 */
+  --shadow-sm: 0 2px 6px rgba(61,104,230,0.08), 0 1px 2px rgba(40,70,140,0.06);        /* 卡片投影（柔和彩色） */
+  --shadow: 0 18px 44px rgba(61,104,230,0.16), 0 2px 8px rgba(40,70,140,0.08);         /* 弹窗投影 */
+  --shadow-glow: 0 0 0 1px rgba(61,104,230,0.26), 0 10px 26px rgba(255,127,176,0.32);  /* 主色发光（蓝粉叠加） */
+}
+
+[data-theme="cute-bluepink-dark"] {
+  --bg-0: #13172d;                                              /* 窗口最底层（夜空蓝紫） */
+  --bg-1: #1a1f3d;                                              /* 内容区底色 */
+  --bg-2: #2a335f;                                              /* 输入框聚焦态底色 */
+  --panel: #272f56;                                             /* 弹窗/浮层底色 */
+  --panel2: #303866;                                            /* 次级块、标签底 */
+  --card: #232a4d;                                              /* 卡片底色 */
+  --card-hover: #2b325c;                                        /* 卡片/行悬停底色 */
+  --card-grad: linear-gradient(180deg, #252c50 0%, #1f2543 100%); /* 卡片背景渐变 */
+  --modal-bg: linear-gradient(180deg, #262d56 0%, #1b2039 100%);  /* 弹窗背景渐变 */
+  --line: rgba(190,205,255,0.11);                               /* 常规分隔线 */
+  --line-strong: rgba(190,205,255,0.20);                        /* 强调描边 */
+  --line-soft: rgba(190,205,255,0.055);                         /* 极淡分隔（斑马纹） */
+  --tx: #d6dbf5;                                                /* 正文（对 --bg-1 约 11.7:1）*/
+  --tx-strong: #f5f7ff;                                         /* 标题与关键数字（对 --bg-1 约 15.0:1）*/
+  --tx2: #9aa4ce;                                               /* 次要说明（对 --bg-1 约 6.6:1）*/
+  --tx3: #6c76a0;                                               /* 弱化文字/占位符（对 --bg-1 约 3.6:1）*/
+  --ok: #56dea8;                                                /* 成功 */
+  --ok-soft: rgba(86,222,168,0.14);                             /* 成功态半透明底 */
+  --warn: #ffce6a;                                              /* 警告 */
+  --warn-soft: rgba(255,206,106,0.14);                          /* 警告态半透明底 */
+  --err: #ff87ac;                                               /* 异常 */
+  --err-soft: rgba(255,135,172,0.14);                           /* 异常态半透明底 */
+  --err-bg: #2e1b2a;                                            /* 错误卡片整块底色 */
+  --acc: #7a9cff;                                               /* 主色（糖果蓝提亮） */
+  --acc-2: #ff9ec4;                                             /* 辅助色（糖果粉） */
+  --acc-grad: linear-gradient(135deg, #7a9cff 0%, #ff9ec4 100%); /* 主渐变 */
+  --acc-soft: rgba(122,156,255,0.16);                           /* 主色 16% 透明底 */
+  --bar-bg: rgba(26,31,61,0.72);                                /* 标题栏/侧边栏半透明底 */
+  --bar-bg-soft: rgba(26,31,61,0.45);                           /* 表头/脚注浮层底 */
+  --track: rgba(190,205,255,0.12);                              /* 进度条轨道 */
+  --scroll-thumb: rgba(122,156,255,0.22);                       /* 滚动条滑块 */
+  --scroll-thumb-hover: rgba(122,156,255,0.36);                 /* 滚动条悬停 */
+  --shadow-sm: 0 2px 8px rgba(10,14,34,0.32), 0 1px 2px rgba(10,14,34,0.24);           /* 卡片投影 */
+  --shadow: 0 18px 48px rgba(10,14,34,0.50), 0 2px 8px rgba(10,14,34,0.34);            /* 弹窗投影 */
+  --shadow-glow: 0 0 0 1px rgba(122,156,255,0.30), 0 10px 28px rgba(255,158,196,0.30); /* 主色发光（蓝粉叠加） */
+}

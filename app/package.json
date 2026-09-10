@@ -1,0 +1,81 @@
+{
+  "name": "api-balance-panel",
+  "version": "1.0.0",
+  "private": true,
+  "description": "API 余额监控面板：一个窗口看完所有 AI 平台与中转站的余额",
+  "productName": "API 余额面板",
+  "main": "./out/main/index.js",
+  "author": "api-balance-panel",
+  "license": "MIT",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "typecheck": "vue-tsc --noEmit -p tsconfig.web.json --composite false && tsc --noEmit -p tsconfig.node.json --composite false",
+    "pack": "electron-vite build && electron-builder --dir",
+    "dist": "electron-vite build && electron-builder",
+    "dist:win": "electron-vite build && electron-builder --win --x64"
+  },
+  "dependencies": {
+    "vue": "3.5.42"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "@vitejs/plugin-vue": "6.0.8",
+    "electron": "44.2.0",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "5.0.0",
+    "typescript": "5.9.3",
+    "vite": "7.3.6",
+    "vue-tsc": "3.3.11"
+  },
+  "build": {
+    "appId": "com.api-balance-panel.app",
+    "productName": "API 余额面板",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/icon.png",
+        "to": "icon.png"
+      },
+      {
+        "from": "resources/tray.png",
+        "to": "tray.png"
+      },
+      {
+        "from": "resources/tray-alert.png",
+        "to": "tray-alert.png"
+      },
+      {
+        "from": "resources/backgrounds",
+        "to": "backgrounds"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "resources/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "API 余额面板"
+    }
+  }
+}

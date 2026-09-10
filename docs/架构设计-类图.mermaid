@@ -1,0 +1,212 @@
+%% API 余额监控面板 —— 数据结构与接口类图
+%% 来源：docs/架构设计.md 第 3.2 节
+classDiagram
+    class Account {
+        +string id
+        +string name
+        +AccountType type
+        +boolean enabled
+        +string secret_enc
+        +string secret_masked
+        +string base_url
+        +string user_id
+        +number quota_per_usd
+        +number quota_total
+        +string unit
+        +CustomRequest request
+        +CustomExtract extract
+        +number threshold
+        +boolean notice_enabled
+        +string last_status
+        +string last_error
+        +number last_ts
+        +number created_at
+        +number updated_at
+    }
+    class CustomRequest {
+        +string url
+        +string method
+        +Record headers
+        +string body
+    }
+    class CustomExtract {
+        +string remaining
+        +string total
+        +string used
+        +string unit
+        +number scale
+        +ExtractItem[] items
+    }
+    class Snapshot {
+        +string id
+        +string account_id
+        +number ts
+        +boolean ok
+        +number remaining
+        +number total
+        +number used
+        +string unit
+        +string note
+        +SnapshotItem[] items
+        +number latency_ms
+        +string source
+    }
+    class Settings {
+        +number refresh_seconds
+        +boolean pause_when_hidden
+        +number default_threshold
+        +number default_threshold_relay
+        +boolean notice_enabled
+        +number notice_max_per_day
+        +number concurrency
+        +number timeout_ms
+        +number cache_seconds
+        +number snapshot_retention_days
+    }
+    class BalanceResult {
+        +boolean ok
+        +number remaining
+        +number total
+        +number used
+        +string unit
+        +string note
+        +BalanceItem[] items
+        +number ts
+        +number latencyMs
+        +boolean cached
+        +ErrorCode errorCode
+        +string errorDetail
+    }
+    class BalanceItem {
+        +string planName
+        +number remaining
+        +number total
+        +number used
+        +string unit
+    }
+    class BalanceRow {
+        +string accountId
+        +string name
+        +AccountType type
+        +number threshold
+        +boolean lowBalance
+    }
+    class AppInfo {
+        +string version
+        +string dataDir
+        +boolean secure
+        +string configStatus
+    }
+    class Store {
+        -AppConfig config
+        +load() AppConfig
+        +save() void
+        +listAccounts() Account[]
+        +getAccount(id) Account
+        +saveAccount(input) Account
+        +removeAccount(id) boolean
+        +getSettings() Settings
+        +saveSettings(patch) Settings
+        +getSecret(account) string
+        +getNoticeState(id) NoticeState
+        +bumpNotice(id) void
+    }
+    class Crypto {
+        +isSecure() boolean
+        +encrypt(plain) string
+        +decrypt(enc) string
+        -obfuscate(plain) string
+    }
+    class HttpClient {
+        +request(url, opts) HttpResponse
+        -assertAscii(url, headers) void
+    }
+    class ErrorMapper {
+        +text(code, detail) string
+        +mapHttpStatus(status) ErrorCode
+        +mapFetchError(err) ErrorCode
+        +fail(code, detail) BalanceResult
+    }
+    class AdapterRegistry {
+        +PROVIDERS
+        +getAdapter(type) Adapter
+    }
+    class AdapterFn {
+        <<type>>
+    }
+    class AdapterUtil {
+        +dig(obj, path) any
+        +num(v, scale) number
+        +okResult(partial) BalanceResult
+        +safeJson(text) any
+    }
+    class QueryService {
+        -Map cache
+        +refreshAll(force) PanelPayload
+        +refreshOne(id) BalanceRow
+        -runPool(tasks, limit) Promise
+        -queryAccount(acc) BalanceRow
+    }
+    class SnapshotStore {
+        +append(rows) void
+        +prune(days) void
+    }
+    class Scheduler {
+        +start(seconds) void
+        +stop() void
+        +reset(seconds) void
+        +onWindowVisibility(visible) void
+    }
+    class Notifier {
+        +check(rows) void
+        -canNotify(id) boolean
+    }
+    class BrowserStub {
+        +launch() void
+        +login() void
+        +refreshCookie() void
+        +close() void
+    }
+    class IpcHandlers {
+        +registerAll() void
+    }
+    class PanelApi {
+        <<interface>>
+    }
+    class usePanel {
+        +accounts
+        +rows
+        +settings
+        +loadAll() void
+        +refreshAll() void
+        +refreshOne(id) void
+        +saveAccount(input) void
+        +removeAccount(id) void
+        +saveSettings(patch) void
+    }
+
+    Account "1" --> "0..1" CustomRequest : custom 必填
+    Account "1" --> "0..1" CustomExtract : custom 必填
+    BalanceResult "1" --> "*" BalanceItem : 子项明细
+    BalanceRow --|> BalanceResult : 继承
+    Snapshot "1" --> "*" BalanceItem : 落盘子项
+    Store ..> Account : 读写
+    Store --> Crypto : 加解密 secret_enc
+    QueryService --> Store : 取账号与明文密钥
+    QueryService --> AdapterRegistry : 分派
+    QueryService --> HttpClient : 间接（经适配器）
+    QueryService --> SnapshotStore : 写快照
+    QueryService --> Notifier : 低余额告警
+    QueryService ..> ErrorMapper : 兜底映射
+    AdapterRegistry "1" --> "*" AdapterFn : PROVIDERS
+    AdapterFn ..> AdapterUtil : dig / num / okResult
+    AdapterFn ..> HttpClient : http 请求
+    AdapterFn ..> ErrorMapper : fail 码
+    AdapterFn ..> BalanceResult : 返回
+    BrowserStub ..> AdapterFn : 二期实现同类接口
+    IpcHandlers --> Store
+    IpcHandlers --> QueryService
+    IpcHandlers --> Scheduler
+    IpcHandlers ..> AppInfo
+    PanelApi ..> IpcHandlers : ipcRenderer.invoke
+    usePanel --> PanelApi

@@ -1,0 +1,17 @@
+/**
+ * T02 数据层实测用的临时编译配置（不属于主流程）。
+ * 把 src/main 与 src/shared 编译成 CommonJS 到 scripts/.tmp，
+ * 再用 electron 当 node 运行时跑 scripts/verify.js（需要 safeStorage，普通 node 没有）。
+ */
+{
+  "extends": "../tsconfig.node.json",
+  "compilerOptions": {
+    "composite": false,
+    "declaration": false,
+    "sourceMap": false,
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "outDir": "./.tmp"
+  },
+  "include": ["../src/main/**/*.ts", "../src/shared/**/*.ts"]
+}
