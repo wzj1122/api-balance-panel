@@ -23,20 +23,35 @@ const selectedDay = computed(() => {
   const idx = r.days.findIndex((d) => d.ts === ts)
   if (idx < 0) return null
   const dt = new Date(ts)
-  const rows = r.accounts.map((a) => ({ name: a.name, type: a.type, unit: a.unit, value: a.days[idx] }))
+  const rows = r.accounts.map((a) => ({
+    name: a.name,
+    type: a.type,
+    unit: a.unit,
+    value: a.days[idx],
+    gap: a.gapDays?.[idx] ?? null
+  }))
   const units = r.unitTotals
-    .map((u) => ({ unit: u.unit, value: u.days[idx] }))
+    .map((u) => ({ unit: u.unit, value: u.days[idx], gap: u.gapDays?.[idx] ?? null }))
     .filter((u) => u.value !== null && u.value !== undefined)
   const hasAny = rows.some((x) => x.value !== null && x.value !== undefined)
+  const hasGap = rows.some((x) => x.gap !== null && x.gap !== undefined)
   const week = ['日', '一', '二', '三', '四', '五', '六'][dt.getDay()]
   return {
     title: dt.getMonth() + 1 + ' 月 ' + dt.getDate() + ' 日',
     weekday: '星期' + week,
     rows,
     units,
-    hasAny
+    hasAny,
+    hasGap
   }
 })
+
+/** 窗口内「停机期间消耗」按单位汇总（单位不同不能相加，分开列） */
+const gapNotes = computed(() =>
+  (report.value?.unitTotals ?? [])
+    .filter((u) => (u.gapTotal ?? 0) > 0)
+    .map((u) => ({ unit: u.unit, value: u.gapTotal }))
+)
 
 async function load() {
   loading.value = true
@@ -193,6 +208,13 @@ function exportCsv() {
           </div>
         </div>
 
+        <div v-if="gapNotes.length" class="gap-note">
+          <span class="gap-ico" title="软件未运行期间">⏸</span>
+          <span>检测到<strong>停机期间消耗</strong>（软件未运行，无法按天归属）：</span>
+          <b v-for="g in gapNotes" :key="g.unit" class="num gap-val">{{ fmtNumber(g.value) }} {{ g.unit }}</b>
+          <span class="muted">已单独标记，不计入每日均值、耗尽预估与预算判断。</span>
+        </div>
+
         <div class="charts">
           <div v-for="bc in barCharts" :key="bc.unit" class="chart-card">
             <div class="chart-title">
@@ -224,6 +246,7 @@ function exportCsv() {
                 <th v-for="(d, i) in report.days" :key="d.ts">{{ d.label }}</th>
                 <th>今日</th>
                 <th>7日均</th>
+                <th title="软件未运行期间的余额下降，不计入均值与预估">停机期间</th>
                 <th>建议阈值</th>
                 <th>预计耗尽</th>
               </tr>
@@ -240,6 +263,9 @@ function exportCsv() {
                 </td>
                 <td class="num today">{{ a.today === null ? '—' : fmtNumber(a.today) }}</td>
                 <td class="num">{{ a.avg7 === null ? '—' : fmtNumber(a.avg7) }}</td>
+                <td class="num gap" :class="{ dim: !a.gapTotal }" :title="a.gapTotal ? '软件未运行期间的消耗，未计入均值与预估' : ''">
+                  {{ a.gapTotal ? fmtNumber(a.gapTotal) : '—' }}
+                </td>
                 <td class="num suggested">
                   {{ a.suggestedThreshold === null ? '—' : fmtNumber(a.suggestedThreshold) }}
                 </td>
@@ -253,6 +279,7 @@ function exportCsv() {
                 <td v-for="(v, i) in u.days" :key="i" class="num strong">{{ v === null ? '—' : fmtNumber(v) }}</td>
                 <td class="num strong">{{ u.today === null ? '—' : fmtNumber(u.today) }}</td>
                 <td class="num strong">{{ u.total7 === null ? '—' : fmtNumber(u.total7) }}</td>
+                <td class="num strong gap">{{ u.gapTotal ? fmtNumber(u.gapTotal) : '—' }}</td>
                 <td></td>
                 <td></td>
               </tr>
@@ -276,16 +303,17 @@ function exportCsv() {
           {{ selectedDay.title }}
           <span class="dd-sub">{{ selectedDay.weekday }}</span>
         </div>
-        <div v-if="!selectedDay.hasAny" class="dd-empty">这一天没有用量记录</div>
+        <div v-if="!selectedDay.hasAny && !selectedDay.hasGap" class="dd-empty">这一天没有用量记录</div>
         <table v-else class="dd-table">
           <thead>
-            <tr><th class="tl">账号</th><th>单位</th><th>用量</th></tr>
+            <tr><th class="tl">账号</th><th>单位</th><th>用量</th><th title="软件未运行期间的余额下降，不计入当日用量">停机期间</th></tr>
           </thead>
           <tbody>
             <tr v-for="r in selectedDay.rows" :key="r.name">
               <td class="tl">{{ r.name }} <span class="muted">{{ typeLabel(r.type) }}</span></td>
               <td class="muted">{{ r.unit || '—' }}</td>
               <td class="num">{{ r.value === null ? '—' : fmtNumber(r.value) }}</td>
+              <td class="num gap" :class="{ dim: !r.gap }">{{ r.gap ? fmtNumber(r.gap) : '—' }}</td>
             </tr>
           </tbody>
           <tfoot v-if="selectedDay.units.length">
@@ -293,9 +321,13 @@ function exportCsv() {
               <td class="tl strong">合计（{{ u.unit }}）</td>
               <td></td>
               <td class="num strong">{{ fmtNumber(u.value) }}</td>
+              <td class="num strong gap">{{ u.gap ? fmtNumber(u.gap) : '—' }}</td>
             </tr>
           </tfoot>
         </table>
+        <p v-if="selectedDay.hasGap" class="dd-note">
+          该日的「停机期间」列是上次关闭软件到本次打开之间的余额下降，无法按天归属，因此不计入当日用量与日均。
+        </p>
         <p class="dd-note">余额型账号按「剩余变化」估算，充值会掩盖消耗，仅供参考。</p>
       </div>
     </BaseModal>
@@ -351,6 +383,19 @@ function exportCsv() {
 .usage-table td.fcast.warn { color: var(--warn); }
 .usage-table td.fcast.danger { color: var(--err); }
 .usage-table td.fcast.ok { color: var(--ok); }
+/* 停机期间（软件未运行）消耗：单独标记，用警示色但弱化于错误色 */
+.usage-table td.gap, .dd-table td.gap { color: var(--warn); font-weight: 600; }
+.usage-table td.gap.dim { color: var(--tx3); font-weight: 400; }
+.dd-table td.gap.dim { color: var(--tx3); font-weight: 400; }
+.gap-note {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  margin: 0 0 12px; padding: 10px 14px;
+  background: var(--warn-soft, rgba(255, 176, 32, 0.12));
+  border: 1px solid var(--warn-line, rgba(255, 176, 32, 0.35));
+  border-radius: 12px; font-size: var(--fs-foot); color: var(--tx2);
+}
+.gap-ico { font-size: 13px; }
+.gap-val { color: var(--warn); font-variant-numeric: tabular-nums; }
 .usage-table tfoot td { border-bottom: none; background: var(--acc-soft); }
 .acc-name { display: block; font-weight: 600; color: var(--tx); }
 .muted { color: var(--tx3); font-size: var(--fs-foot); }

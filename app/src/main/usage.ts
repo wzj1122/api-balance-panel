@@ -49,48 +49,111 @@ function daySlices(days: number): DaySlice[] {
 
 /** 数组里第一个/最后一个非空 used（都算不到返回 null） */
 function usedAt(list: Snapshot[], wantFirst: boolean): number | null {
-  for (const s of wantFirst ? list : list.slice().reverse()) {
-    if (s.used !== null && s.used !== undefined && Number.isFinite(s.used)) return s.used
+  return usedSnapAt(list, wantFirst)?.used ?? null
+}
+
+/** 数组里第一个/最后一个含有效 used 的快照（带时间戳，跨期判定用） */
+function usedSnapAt(list: Snapshot[], wantFirst: boolean): { ts: number; used: number } | null {
+  const seq = wantFirst ? list : list.slice().reverse()
+  for (const s of seq) {
+    if (s.used !== null && s.used !== undefined && Number.isFinite(s.used)) return { ts: s.ts, used: s.used }
   }
   return null
 }
 
-/** 该日之前最后一次剩余；没有返回 null */
-function refRemaining(list: Snapshot[], beforeTs: number): number | null {
+/** 该时刻之前最后一条快照（带时间戳与剩余，跨期判定用）；没有返回 null */
+function refSnapshot(list: Snapshot[], beforeTs: number): { ts: number; remaining: number | null } | null {
   for (let i = list.length - 1; i >= 0; i--) {
     if (list[i].ts < beforeTs) {
       const v = list[i].remaining
-      return v !== null && v !== undefined && Number.isFinite(v) ? v : null
+      return { ts: list[i].ts, remaining: v !== null && v !== undefined && Number.isFinite(v) ? v : null }
     }
   }
   return null
 }
 
-/** 单账号逐日消耗明细：values 为当日消耗，rechargeFlags 标记疑似充值（剩余反而增加） */
+/**
+ * 跨期（停机）判定阈值：与上一条快照的间隔超过「采样间隔 × 3」、且至少 30 分钟，
+ * 就认为软件这段时间没在运行（或长时间没刷新成功）。这段余额下降不记入任何一天，
+ * 而是单独标记为「停机期间消耗」——避免把多天消耗堆到重新打开的那一天。
+ */
+function gapLimitMs(): number {
+  const seconds = store.getSettings().refresh_seconds || 300
+  return Math.max(30 * 60 * 1000, seconds * 3 * 1000)
+}
+
+interface DailyDetail {
+  /** 与 days 对齐的当日消耗（跨期部分已剥离） */
+  values: (number | null)[]
+  /** 与 days 对齐：该日疑似充值 */
+  rechargeFlags: boolean[]
+  /** 与 days 对齐：该日被单独标记的「停机期间消耗」，null = 无 */
+  gapDays: (number | null)[]
+  /** 窗口内「停机期间消耗」合计 */
+  gapTotal: number
+}
+
+/**
+ * 单账号逐日消耗明细。
+ *
+ * - values：当日真实消耗。若「当天第一条快照」距「上一条快照」超过 gapMs（软件没在运行），
+ *   这段下降不计入当天，改记入 gapDays —— 否则关几天再打开会把整段消耗堆到重启那天。
+ * - gapDays/gapTotal：跨期（停机）消耗，单独标记，不参与日均、预估与预算判断。
+ */
 function dailyConsumedDetailed(
   list: Snapshot[],
   slices: DaySlice[],
-  hasUsed: boolean
-): { values: (number | null)[]; rechargeFlags: boolean[] } {
+  hasUsed: boolean,
+  gapMs: number
+): DailyDetail {
   const values: (number | null)[] = []
   const rechargeFlags: boolean[] = []
+  const gapDays: (number | null)[] = []
+  let gapTotal = 0
+  const round4 = (v: number): number => Math.round(v * 10000) / 10000
+
   for (const sl of slices) {
     const inDay = list.filter((s) => s.ts >= sl.start && s.ts < sl.end)
     if (inDay.length === 0) {
       values.push(null)
       rechargeFlags.push(false)
+      gapDays.push(null)
       continue
     }
+    const ref = refSnapshot(list, sl.start)
+
     if (hasUsed) {
-      const first = usedAt(inDay, true)
-      const last = usedAt(inDay, false)
-      values.push(first === null || last === null ? null : Math.max(0, Math.round((last - first) * 10000) / 10000))
+      // 用量型（套餐累计值）：当日消耗 = 当日首末 used 之差，天然不含停机期
+      const first = usedSnapAt(inDay, true)
+      const last = usedSnapAt(inDay, false)
+      values.push(first === null || last === null ? null : Math.max(0, round4(last.used - first.used)))
       rechargeFlags.push(false)
+      // 停机期间用量：当天首条 used − 当天之前最后一条 used（间隔过大才标记）
+      let gap: number | null = null
+      const before = list.filter((s) => s.ts < sl.start)
+      const refUsed = usedSnapAt(before, false)
+      if (first && refUsed && first.ts - refUsed.ts > gapMs) {
+        const d = first.used - refUsed.used
+        if (d > 1e-9) gap = round4(d)
+      }
+      gapDays.push(gap)
+      if (gap !== null) gapTotal += gap
       continue
     }
+
     // 余额型：按快照逐段累加。遇到余额上升（充值）就把这一天切开，
     // 充值那一段不计消耗，其余段照常累加 —— 这样充值当天也能看到真实消耗。
-    const ref = refRemaining(list, sl.start) ?? null
+    const firstSnap = inDay.find(
+      (s) => s.remaining !== null && s.remaining !== undefined && Number.isFinite(s.remaining)
+    )
+    let gap: number | null = null
+    let useRefAsBase = true
+    if (ref && ref.remaining !== null && firstSnap && firstSnap.ts - ref.ts > gapMs) {
+      const d = ref.remaining - (firstSnap.remaining as number)
+      if (d > 1e-9) gap = round4(d)
+      useRefAsBase = false // 跨期段不计入当天消耗
+    }
+    const refVal = useRefAsBase && ref ? ref.remaining : null
     let prev: number | null = null
     let consumed = 0
     let sawRecharge = false
@@ -99,12 +162,13 @@ function dailyConsumedDetailed(
       const cur = s.remaining
       if (cur === null || cur === undefined || !Number.isFinite(cur)) continue
       if (prev === null) {
-        prev = ref !== null && Number.isFinite(ref) ? ref : cur
-        if (ref === null || !Number.isFinite(ref)) {
-          // 没有当日之前的基准，就用当日第一条作为起点
+        if (refVal === null || !Number.isFinite(refVal)) {
+          // 没有可用基准（或跨期已剥离）：以当天第一条为起点
+          prev = cur
           hasValue = true
           continue
         }
+        prev = refVal
       }
       hasValue = true
       if (cur > prev + 1e-9) {
@@ -117,17 +181,14 @@ function dailyConsumedDetailed(
     if (!hasValue) {
       values.push(null)
       rechargeFlags.push(false)
-      continue
+    } else {
+      values.push(Math.max(0, round4(consumed)))
+      rechargeFlags.push(sawRecharge)
     }
-    values.push(Math.max(0, Math.round(consumed * 10000) / 10000))
-    rechargeFlags.push(sawRecharge)
+    gapDays.push(gap)
+    if (gap !== null) gapTotal += gap
   }
-  return { values, rechargeFlags }
-}
-
-/** 单账号逐日消耗（只要数值，平台聚合用） */
-function dailyConsumed(list: Snapshot[], slices: DaySlice[], hasUsed: boolean): (number | null)[] {
-  return dailyConsumedDetailed(list, slices, hasUsed).values
+  return { values, rechargeFlags, gapDays, gapTotal: round4(gapTotal) }
 }
 
 /** 近 7 天有效日均；有效日 < minCount 返回 null */
@@ -153,6 +214,7 @@ export async function buildDailyUsage(days: number = 30): Promise<DailyUsageRepo
   }
 
   const slices = daySlices(Math.min(Math.max(Math.round(days), 1), 90))
+  const gapMs = gapLimitMs()
 
   const byAccount = new Map<string, Snapshot[]>()
   for (const s of okOnly) {
@@ -172,7 +234,7 @@ export async function buildDailyUsage(days: number = 30): Promise<DailyUsageRepo
     const name = acc?.name ?? accountId
     const unit = latest.unit || ''
     const hasUsed = list.some((s) => s.used !== null && s.used !== undefined && Number.isFinite(s.used))
-    const detail = dailyConsumedDetailed(list, slices, hasUsed)
+    const detail = dailyConsumedDetailed(list, slices, hasUsed, gapMs)
     const daysVals = detail.values
     const today = daysVals.length > 0 ? daysVals[daysVals.length - 1] : null
     const avg7 = avgRecent(daysVals, 2)
@@ -237,6 +299,8 @@ export async function buildDailyUsage(days: number = 30): Promise<DailyUsageRepo
       hasUsed,
       remaining,
       rechargeFlags: detail.rechargeFlags,
+      gapDays: detail.gapDays,
+      gapTotal: detail.gapTotal,
       suggestedThreshold: avg7 !== null && avg7 > 0 ? Math.round(avg7 * 3 * 100) / 100 : null,
       creditTotal,
       cycleStartTs,
@@ -250,16 +314,21 @@ export async function buildDailyUsage(days: number = 30): Promise<DailyUsageRepo
   accounts.sort((a, b) => (b.today ?? 0) - (a.today ?? 0) || a.name.localeCompare(b.name, 'zh'))
 
   // 按单位合计
-  const unitMap = new Map<string, { days: (number | null)[]; today: number | null; total7: number | null }>()
+  const unitMap = new Map<
+    string,
+    { days: (number | null)[]; today: number | null; total7: number | null; gapDays: (number | null)[]; gapTotal: number }
+  >()
   for (const a of accounts) {
     if (!a.unit) continue
     let u = unitMap.get(a.unit)
     if (!u) {
-      u = { days: slices.map(() => null), today: null, total7: null }
+      u = { days: slices.map(() => null), today: null, total7: null, gapDays: slices.map(() => null), gapTotal: 0 }
       unitMap.set(a.unit, u)
     }
     u.days = u.days.map((prev, i) => (a.days[i] === null ? prev : (prev ?? 0) + (a.days[i] as number)))
+    u.gapDays = u.gapDays.map((prev, i) => (a.gapDays[i] === null ? prev : (prev ?? 0) + (a.gapDays[i] as number)))
     u.today = (u.today ?? 0) + (a.today ?? 0)
+    u.gapTotal += a.gapTotal
   }
   for (const u of unitMap.values()) {
     const last7 = u.days.slice(-7).filter((v): v is number => v !== null && Number.isFinite(v))
@@ -269,7 +338,9 @@ export async function buildDailyUsage(days: number = 30): Promise<DailyUsageRepo
     unit,
     days: v.days,
     today: v.today === 0 && v.today !== null && v.days.every((x) => x === null) ? null : v.today,
-    total7: v.total7
+    total7: v.total7,
+    gapDays: v.gapDays,
+    gapTotal: Math.round(v.gapTotal * 10000) / 10000
   }))
   unitTotals.sort((a, b) => (b.total7 ?? -1) - (a.total7 ?? -1) || a.unit.localeCompare(b.unit))
 
@@ -299,6 +370,7 @@ export async function buildPlatformUsage(days: number = 30): Promise<PlatformUsa
   }
 
   const slices = daySlices(Math.min(Math.max(Math.round(days), 1), 90))
+  const gapMs = gapLimitMs()
 
   // 账号级逐日消耗（口径与 buildDailyUsage 一致）
   const byAccount = new Map<string, Snapshot[]>()
@@ -308,7 +380,14 @@ export async function buildPlatformUsage(days: number = 30): Promise<PlatformUsa
     else byAccount.set(s.account_id, [s])
   }
 
-  interface AccRow { type: AccountType; unit: string; hasUsed: boolean; days: (number | null)[] }
+  interface AccRow {
+    type: AccountType
+    unit: string
+    hasUsed: boolean
+    days: (number | null)[]
+    gapDays: (number | null)[]
+    gapTotal: number
+  }
   const accRows: AccRow[] = []
   for (const [accountId, list] of byAccount) {
     const latest = list[list.length - 1]
@@ -318,22 +397,38 @@ export async function buildPlatformUsage(days: number = 30): Promise<PlatformUsa
     const type: AccountType = acc?.type ?? 'custom'
     const unit = latest.unit || ''
     const hasUsed = list.some((s) => s.used !== null && s.used !== undefined && Number.isFinite(s.used))
-    accRows.push({ type, unit, hasUsed, days: dailyConsumed(list, slices, hasUsed) })
+    const detail = dailyConsumedDetailed(list, slices, hasUsed, gapMs)
+    accRows.push({ type, unit, hasUsed, days: detail.values, gapDays: detail.gapDays, gapTotal: detail.gapTotal })
   }
 
   // 按 (平台类型 × 单位) 聚合：组内账号同日值相加
-  const platMap = new Map<string, PlatformUsageRow & { count: number }>()
+  const platMap = new Map<string, PlatformUsageRow & { count: number; gapDays: (number | null)[] }>()
   for (const row of accRows) {
     const key = row.type + '\u0000' + row.unit
     let rec = platMap.get(key)
     if (!rec) {
-      rec = { type: row.type, unit: row.unit, hasUsed: row.hasUsed, days: slices.map(() => null), today: null, total: null, avg7: null, count: 0 }
+      rec = {
+        type: row.type,
+        unit: row.unit,
+        hasUsed: row.hasUsed,
+        days: slices.map(() => null),
+        today: null,
+        total: null,
+        avg7: null,
+        gapTotal: 0,
+        count: 0,
+        gapDays: slices.map(() => null)
+      }
       platMap.set(key, rec)
     }
     rec.count += 1
     rec.days = rec.days.map((prev, i) =>
       row.days[i] === null ? prev : (prev ?? 0) + (row.days[i] as number)
     )
+    rec.gapDays = rec.gapDays.map((prev, i) =>
+      row.gapDays[i] === null ? prev : (prev ?? 0) + (row.gapDays[i] as number)
+    )
+    rec.gapTotal += row.gapTotal
   }
 
   const platforms: PlatformUsageRow[] = []
@@ -342,21 +437,34 @@ export async function buildPlatformUsage(days: number = 30): Promise<PlatformUsa
     const sum = rec.days.filter((v): v is number => v !== null && Number.isFinite(v)).reduce((a, b) => a + b, 0)
     rec.total = sum > 0 ? sum : (rec.days.some((v) => v !== null) ? 0 : null)
     rec.avg7 = avgRecent(rec.days, 2)
-    platforms.push({ type: rec.type, unit: rec.unit, hasUsed: rec.hasUsed, days: rec.days, today: rec.today, total: rec.total, avg7: rec.avg7 })
+    platforms.push({
+      type: rec.type,
+      unit: rec.unit,
+      hasUsed: rec.hasUsed,
+      days: rec.days,
+      today: rec.today,
+      total: rec.total,
+      avg7: rec.avg7,
+      gapTotal: Math.round(rec.gapTotal * 10000) / 10000
+    })
   }
   platforms.sort((a, b) => (b.total ?? -1) - (a.total ?? -1) || a.type.localeCompare(b.type))
 
   // 按单位合计
-  const unitMap = new Map<string, { days: (number | null)[]; today: number | null; total7: number | null }>()
+  const unitMap = new Map<
+    string,
+    { days: (number | null)[]; today: number | null; total7: number | null; gapDays: (number | null)[]; gapTotal: number }
+  >()
   for (const p of platforms) {
     if (!p.unit) continue
     let u = unitMap.get(p.unit)
     if (!u) {
-      u = { days: slices.map(() => null), today: null, total7: null }
+      u = { days: slices.map(() => null), today: null, total7: null, gapDays: slices.map(() => null), gapTotal: 0 }
       unitMap.set(p.unit, u)
     }
     u.days = u.days.map((prev, i) => (p.days[i] === null ? prev : (prev ?? 0) + (p.days[i] as number)))
     u.today = (u.today ?? 0) + (p.today ?? 0)
+    u.gapTotal += p.gapTotal
   }
   for (const u of unitMap.values()) {
     const last7 = u.days.slice(-7).filter((v): v is number => v !== null && Number.isFinite(v))
@@ -366,7 +474,9 @@ export async function buildPlatformUsage(days: number = 30): Promise<PlatformUsa
     unit,
     days: v.days,
     today: v.today === 0 && v.days.every((x) => x === null) ? null : v.today,
-    total7: v.total7
+    total7: v.total7,
+    gapDays: v.gapDays,
+    gapTotal: Math.round(v.gapTotal * 10000) / 10000
   }))
   unitTotals.sort((a, b) => (b.total7 ?? -1) - (a.total7 ?? -1) || a.unit.localeCompare(b.unit))
 

@@ -48,7 +48,7 @@ function shortNum(v: number): string {
   return v.toFixed(3).replace(/\.?0+$/, '')
 }
 
-interface CalCell { ts: number; inRange: boolean; val: number | null; day: number; recharge: boolean }
+interface CalCell { ts: number; inRange: boolean; val: number | null; day: number; recharge: boolean; gap: number | null }
 
 /** 日历格子的类名：blank（无数据）/ lvl-1..3（颜色深浅） */
 function cellClass(c: CalCell): string {
@@ -89,9 +89,10 @@ const monthBlocks = computed<CalMonth[]>(() => {
       const ts = new Date(dt.getFullYear(), dt.getMonth(), day).getTime()
       const idx = tsIndex.get(ts)
       const val = idx !== undefined && ut ? ut.days[idx] : null
+      const gap = idx !== undefined && ut ? (ut.gapDays?.[idx] ?? null) : null
       const recharge =
         idx !== undefined && r.accounts.some((a) => a.rechargeFlags && a.rechargeFlags[idx] === true)
-      cells.push({ ts, inRange: idx !== undefined, val, day, recharge })
+      cells.push({ ts, inRange: idx !== undefined, val, day, recharge, gap })
     }
     const valid = cells.filter((c) => c.val !== null && c.val !== undefined && Number.isFinite(c.val))
     const total = valid.length ? valid.reduce((a, c) => a + (c.val as number), 0) : null
@@ -146,16 +147,18 @@ const monthBlocks = computed<CalMonth[]>(() => {
           :key="c.ts"
           class="cal-cell"
           :class="cellClass(c)"
-          :disabled="!c.inRange || c.val === null"
+          :disabled="!c.inRange || (c.val === null && !c.gap)"
           type="button"
+          :title="c.gap ? '停机期间消耗 ' + shortNum(c.gap) + ' ' + majorUnit + '（软件未运行，不计入当天）' : ''"
           @click="emit('select-day', c.ts)"
         >
-          <span class="cal-day">{{ c.day }}<span v-if="c.recharge" class="cal-flag" title="疑似充值">⚡</span></span>
+          <span class="cal-day">{{ c.day }}<span v-if="c.recharge" class="cal-flag" title="疑似充值">⚡</span><span v-if="c.gap" class="cal-flag gap" title="含停机期间消耗">⏸</span></span>
           <span v-if="c.val !== null && c.inRange" class="cal-val">{{ shortNum(c.val) }}</span>
+          <span v-else-if="c.gap" class="cal-val gap-val">⏸ {{ shortNum(c.gap) }}</span>
         </button>
       </div>
     </div>
-    <p class="cal-note">格子颜色越深表示当天消耗越多（按 {{ majorUnit || '主单位' }} 归一化）；点击有数据的天查看当日明细。余额型账号按「剩余变化」估算，充值会掩盖消耗。</p>
+    <p class="cal-note">格子颜色越深表示当天消耗越多（按 {{ majorUnit || '主单位' }} 归一化）；点击有数据的天查看当日明细。余额型账号按「剩余变化」估算，充值会掩盖消耗。<br />带 <b class="gap-mark">⏸</b> 标记的日子表示检测到<strong>停机期间消耗</strong>（上次关闭软件到本次打开之间的余额下降）：这段消耗无法按天归属，因此不画进颜色深浅、也不计入日均与耗尽预估。</p>
   </div>
 </template>
 
@@ -181,5 +184,10 @@ const monthBlocks = computed<CalMonth[]>(() => {
 .cal-day { font-weight: 600; font-size: 12.5px; }
 .cal-val { font-size: 10.5px; font-variant-numeric: tabular-nums; opacity: 0.85; }
 .cal-flag { font-size: 10px; margin-left: 2px; }
+/* 停机期间（软件未运行）消耗标记 */
+.cal-flag.gap { color: var(--warn); }
+.cal-val.gap-val { color: var(--warn); font-weight: 600; opacity: 1; }
+.cal-cell.lvl-2 .cal-val.gap-val, .cal-cell.lvl-3 .cal-val.gap-val { color: #ffe3ad; }
+.gap-mark { color: var(--warn); }
 .cal-note { font-size: var(--fs-foot); color: var(--tx3); margin-top: 8px; line-height: 1.7; }
 </style>

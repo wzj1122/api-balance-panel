@@ -483,6 +483,10 @@ export interface DailyAccount {
   remaining: number | null
   /** 与 days 对齐：该日疑似充值（剩余反而增加 → 当日消耗无法计算） */
   rechargeFlags: boolean[]
+  /** 与 days 对齐：该日被单独标记的「停机期间消耗」（软件未运行期间的余额下降），null = 无 */
+  gapDays: (number | null)[]
+  /** 近 N 天「停机期间消耗」合计（不计入 days / 日均 / 耗尽预估 / 预算判断） */
+  gapTotal: number
   /** 智能阈值建议（近 7 天日均 × 3；数据不足为 null） */
   suggestedThreshold: number | null
   /** 累计总额（进度条分母）：余额每上升一次就把增量累加进来，充值后自动进入新一轮 */
@@ -515,12 +519,26 @@ export interface PlatformUsageRow {
   /** 近 N 天合计（有值日之和） */
   total: number | null
   avg7: number | null
+  /** 近 N 天「停机期间消耗」合计（未计入 days / 合计 / 日均） */
+  gapTotal: number
+}
+
+/** 按单位汇总行（每日使用状况 / 平台用量共用） */
+export interface UnitTotalRow {
+  unit: string
+  days: (number | null)[]
+  today: number | null
+  total7: number | null
+  /** 与 days 对齐：该日「停机期间消耗」合计，null = 无 */
+  gapDays: (number | null)[]
+  /** 近 N 天「停机期间消耗」合计 */
+  gapTotal: number
 }
 
 export interface PlatformUsageReport {
   days: { label: string; ts: number }[]
   platforms: PlatformUsageRow[]
-  unitTotals: { unit: string; days: (number | null)[]; today: number | null; total7: number | null }[]
+  unitTotals: UnitTotalRow[]
   note: string
 }
 export interface DailyUsageReport {
@@ -529,7 +547,7 @@ export interface DailyUsageReport {
   /** 各账号行 */
   accounts: DailyAccount[]
   /** 按单位合计（每单位一行，与 days 对齐） */
-  unitTotals: { unit: string; days: (number | null)[]; today: number | null; total7: number | null }[]
+  unitTotals: UnitTotalRow[]
   /** 统计备注（如部分账号缺少数据） */
   note: string
 }

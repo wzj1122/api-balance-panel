@@ -69,11 +69,18 @@ function barPct(total: number | null): number {
   return Math.max(2, Math.round((total / maxTotal.value) * 100))
 }
 
+/** 窗口内「停机期间消耗」按单位汇总（软件未运行期间的余额下降，单独标记） */
+const gapNotes = computed(() =>
+  (report.value?.unitTotals ?? [])
+    .filter((u) => (u.gapTotal ?? 0) > 0)
+    .map((u) => ({ unit: u.unit, value: u.gapTotal }))
+)
+
 function exportCsv() {
   const r = report.value
   if (!r || r.platforms.length === 0) return
   const rows: (string | number | null | undefined)[][] = []
-  rows.push(['平台', '类型', '单位', '今日', '7日均', '合计', ...r.days.map((d) => d.label)])
+  rows.push(['平台', '类型', '单位', '今日', '7日均', '合计', '停机期间', ...r.days.map((d) => d.label)])
   for (const p of r.platforms) {
     rows.push([
       typeLabel(p.type),
@@ -82,12 +89,13 @@ function exportCsv() {
       p.today ?? '',
       p.avg7 === null || p.avg7 === undefined ? '' : p.avg7.toFixed(4),
       p.total ?? '',
+      p.gapTotal ? p.gapTotal : '',
       ...p.days.map((v) => (v === null || v === undefined ? '' : String(v)))
     ])
   }
   for (const u of r.unitTotals) {
     const sum = u.days.reduce<number>((s, v) => s + (v ?? 0), 0)
-    rows.push(['合计（' + u.unit + '）', '', u.unit, u.today ?? '', u.total7 ?? '', sum || '', ...u.days.map((v) => (v === null || v === undefined ? '' : String(v)))])
+    rows.push(['合计（' + u.unit + '）', '', u.unit, u.today ?? '', u.total7 ?? '', sum || '', u.gapTotal || '', ...u.days.map((v) => (v === null || v === undefined ? '' : String(v)))])
   }
   downloadCsv('平台用量-' + todayStamp() + '.csv', rows)
   exporting.value = true
@@ -143,6 +151,13 @@ function exportCsv() {
           </div>
         </div>
 
+        <div v-if="gapNotes.length" class="gap-note">
+          <span class="gap-ico" title="软件未运行期间">⏸</span>
+          <span>检测到<strong>停机期间消耗</strong>（软件未运行，无法按天归属）：</span>
+          <b v-for="g in gapNotes" :key="g.unit" class="num gap-val">{{ fmtNumber(g.value) }} {{ g.unit }}</b>
+          <span class="muted">已单独标记，不计入每日均值与合计口径之外的其他指标。</span>
+        </div>
+
         <div class="bars-card">
           <div class="bars-title">平台消耗对比（近 {{ range }} 天）</div>
           <div class="bar-row" v-for="p in report.platforms" :key="p.type + p.unit">
@@ -167,6 +182,7 @@ function exportCsv() {
                 <th>今日</th>
                 <th>7日均</th>
                 <th>合计</th>
+                <th title="软件未运行期间的余额下降，不计入每日均值与合计">停机期间</th>
               </tr>
             </thead>
             <tbody>
@@ -177,6 +193,7 @@ function exportCsv() {
                 <td class="num today">{{ p.today === null ? '—' : fmtNumber(p.today) }}</td>
                 <td class="num">{{ p.avg7 === null ? '—' : fmtNumber(p.avg7) }}</td>
                 <td class="num strong">{{ p.total === null ? '—' : fmtNumber(p.total) }}</td>
+                <td class="num gap" :class="{ dim: !p.gapTotal }">{{ p.gapTotal ? fmtNumber(p.gapTotal) : '—' }}</td>
               </tr>
             </tbody>
             <tfoot v-if="report.unitTotals.length">
@@ -187,6 +204,7 @@ function exportCsv() {
                 <td class="num strong">{{ u.today === null ? '—' : fmtNumber(u.today) }}</td>
                 <td class="num strong">{{ u.total7 === null ? '—' : fmtNumber(u.total7) }}</td>
                 <td></td>
+                <td class="num strong gap">{{ u.gapTotal ? fmtNumber(u.gapTotal) : '—' }}</td>
               </tr>
             </tfoot>
           </table>
@@ -241,6 +259,18 @@ function exportCsv() {
 .usage-table td.num { font-variant-numeric: tabular-nums; }
 .usage-table td.strong { font-weight: 700; color: var(--tx); }
 .usage-table tfoot td { border-bottom: none; background: var(--acc-soft); }
+/* 停机期间（软件未运行）消耗 */
+.usage-table td.gap { color: var(--warn); font-weight: 600; }
+.usage-table td.gap.dim { color: var(--tx3); font-weight: 400; }
+.gap-note {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  margin: 0 0 14px; padding: 10px 14px;
+  background: var(--warn-soft, rgba(255, 176, 32, 0.12));
+  border: 1px solid var(--warn-line, rgba(255, 176, 32, 0.35));
+  border-radius: 12px; font-size: var(--fs-foot); color: var(--tx2);
+}
+.gap-ico { font-size: 13px; }
+.gap-val { color: var(--warn); font-variant-numeric: tabular-nums; }
 .th-day.faint { color: transparent; }
 .acc-name { display: block; font-weight: 600; color: var(--tx); }
 .muted { color: var(--tx3); font-size: var(--fs-foot); }
