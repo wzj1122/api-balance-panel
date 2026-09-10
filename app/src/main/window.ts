@@ -128,10 +128,3 @@ export function closeWindow(): void {
 export function isWindowMaximized(): boolean {
   return mainWindow ? mainWindow.isMaximized() : false
 }
-
-/** 单实例锁命中时，把已有窗口唤到前台 */
-export function focusMainWindow(): void {
-  if (!mainWindow) return
-  if (mainWindow.isMinimized()) mainWindow.restore()
-  mainWindow.focus()
-}

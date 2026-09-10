@@ -9,7 +9,7 @@ import { store } from './store'
 import { runDueMonitors } from './monitor'
 import { refresh } from './query'
 import { createTray, destroyTray, updateTray } from './tray'
-import { createWindow, focusMainWindow, setQuitting } from './window'
+import { createWindow, setQuitting, showMainWindow } from './window'
 
 /**
  * 应用入口（主进程）。
@@ -24,7 +24,9 @@ if (!gotSingleLock) {
   app.quit()
 } else {
   app.on('second-instance', () => {
-    focusMainWindow()
+    // 点快捷方式/托盘/其他方式再次启动：不新开实例，把已有主窗口唤到前台
+    // （showMainWindow 会处理 restore + show + focus，覆盖「最小化」和「隐藏到托盘」两种状态）
+    showMainWindow()
   })
 
   // Windows 下系统通知需要显式 AppUserModelId

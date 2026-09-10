@@ -11,17 +11,33 @@ import { showMainWindow } from './window'
  * 图标路径解析：打包后取 process.resourcesPath（electron-builder extraResources），
  * 开发期从 out/main/ 往上两级回到 app/resources/。
  *
+ * 图标：统一使用软件主图标（icon.png），有查询失败或低余额时染成红色作告警。
  * 行为：左键单击 = 显示主面板；右键菜单 = 仅「显示主面板 / 退出」。
- * tooltip 动态显示最低余额账号或失败数量，有查询失败或低余额时图标变警告色。
+ * tooltip 动态显示最低余额账号或失败数量。
  */
 
 let tray: Tray | null = null
 let currentRows: BalanceRow[] = []
 let paused = false
 let onQuitRef: (() => void) | null = null
-/** 正常态 / 警告态（低余额或查询失败）托盘图标 */
+/** 正常态托盘图标（软件主图标）与警告态（主图标染红） */
 let iconNormal: Electron.NativeImage | null = null
 let iconAlert: Electron.NativeImage | null = null
+
+/** 把图标染成红色系（仅改颜色、保留形状与透明度，用于失败/低余额告警态） */
+function tintRed(img: Electron.NativeImage): Electron.NativeImage {
+  const size = img.getSize()
+  if (size.width <= 0 || size.height <= 0) return img
+  const buf = img.toBitmap() // BGRA 顺序
+  for (let i = 0; i + 3 < buf.length; i += 4) {
+    if (buf[i + 3] > 0) {
+      buf[i] = 56 // B
+      buf[i + 1] = 64 // G
+      buf[i + 2] = 226 // R
+    }
+  }
+  return nativeImage.createFromBitmap(buf, size)
+}
 
 function renderTray(): void {
   if (!tray) return
@@ -80,8 +96,8 @@ export function createTray(onQuit: () => void): void {
     const resized = img.resize({ width: 16, height: 16 })
     return resized.isEmpty() ? img : resized
   }
-  iconNormal = loadIcon('tray.png')
-  iconAlert = loadIcon('tray-alert.png') ?? iconNormal
+  iconNormal = loadIcon('icon.png')
+  iconAlert = iconNormal ? tintRed(iconNormal) : null
   if (!iconNormal) iconNormal = nativeImage.createEmpty()
   tray = new Tray(iconNormal)
   tray.on('click', () => showMainWindow())
