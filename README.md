@@ -5,7 +5,7 @@
 - **技术栈**：Electron 44 + Vue 3 + Vite 7 + TypeScript
 - **运行环境**：Windows 10/11（x64）
 
-![build](https://img.shields.io/badge/platform-Windows%2010%2F11-blue) ![license](https://img.shields.io/badge/license-MIT-green)
+![build](https://img.shields.io/badge/platform-Windows%2010%2F11-blue) ![license](https://img.shields.io/badge/license-Proprietary-red) ![author](https://img.shields.io/badge/%C2%A9-2026%20Zhenjie%20Wang-lightgrey)
 
 ---
 
@@ -29,7 +29,7 @@
 
 ## 📦 安装（推荐：安装包）
 
-1. 到 [Releases 页面](https://github.com/wzj1122/api-balance-panel/releases) 下载最新安装包（约 130 MB）。GitHub 附件名不支持中文，实际下载文件名为 **`API.Setup.v1.1.0.exe`**（安装后的程序/快捷方式名为「API 余额面板」，本地绿色版文件名为 `API 余额面板.exe`）。
+1. 到 [Releases 页面](https://github.com/wzj1122/api-balance-panel/releases) 下载最新安装包（约 130 MB）。GitHub 附件名不支持中文，实际下载文件名为 **`API.Setup.v1.1.1.exe`**（安装后的程序/快捷方式名为「API 余额面板」，本地绿色版文件名为 `API 余额面板.exe`）。
 2. 双击运行，跟着安装向导走（默认装到当前用户目录，可点「高级选项」改安装位置）。
 3. 装完后桌面 / 开始菜单出现「API 余额面板」，首次启动如遇 Windows SmartScreen 提示，点 **「更多信息 → 仍要运行」** 即可（个人分发未购买代码签名证书，属正常现象）。
 4. 数据保存在 `%APPDATA%\api-balance-panel\`（`config.json` + `snapshots.json` + `logs\`），备份/换电脑拷贝整个文件夹即可。
@@ -74,7 +74,7 @@ npm install        # 安装依赖
 npm run dev        # 开发模式（热重载）
 npm run typecheck  # 类型检查（vue-tsc + tsc）
 npm run build      # 三段构建，输出 out/
-npm run dist:win   # 打包 NSIS 安装包，输出 dist/API 余额面板 Setup 1.1.0.exe
+npm run dist:win   # 打包 NSIS 安装包，输出 dist/API 余额面板 Setup 1.1.1.exe
 ```
 
 ## 📁 目录结构（代码在 `app/`）
@@ -106,35 +106,27 @@ app/
 
 ## ⚠️ 免责声明
 
-- 本工具为个人自用的开源项目，**非官方出品**，与任何 AI 平台无隶属关系；接口解析可能因平台改版失效。
+- 本工具为作者的个人原创项目，**非官方出品**，与任何 AI 平台无隶属关系；接口解析可能因平台改版失效。
 - 使用"登录抓 Cookie"方式的平台，Cookie 存在本机并加密保存，请勿将 `config.json` 外发。
 - 建议为阿里云等平台创建**只读**专用 AccessKey（`AliyunBSSReadOnlyAccess`），不要把主账号密钥交给本工具。
 - 由于未购买代码签名证书，Windows 会提示"未知发布者"，请确认从本项目 Releases 或源码构建后使用。
 
+## ©️ 版权与授权
+
+本项目是作者的**原创作品**，著作权归作者所有（© 2026 Zhenjie Wang，**保留所有权利**）。
+
+| | |
+|---|---|
+| ✅ **允许**（无需另行许可） | 个人学习、研究与自用（下载、安装、运行，非商业目的）；在未修改的前提下原样分享官方发布页链接 |
+| ⚠️ **需事先取得作者书面许可** | 修改源代码 · 二次开发 · 创作衍生作品 · 复制再分发/公开发布 · 任何商业用途（含收费服务、SaaS 托管） · 移除或篡改版权与署名 |
+| 📧 **授权申请** | **18293592881@163.com**（请说明使用主体、用途与范围，作者保留决定是否授权及授权条件的权利） |
+
+本作品为**源码可见的专有软件**（Source-available，非开源软件）：源码公开仅供学习与评估，**不代表可以自由使用、修改或再分发**。完整条款见 [`LICENSE`](LICENSE)。
+
+> 说明：v1.0.x / v1.1.0 等历史版本曾以 MIT 许可发布，对这些版本的权利依当时许可不变；自本版本（v1.1.1）起适用上述专有授权条款。
+
 ## 📄 许可证
 
-[MIT License](LICENSE) © 2026 Zhenjie Wang
+专有许可 —— 保留所有权利（All Rights Reserved），全文见 [`LICENSE`](LICENSE)。
 
-```text
-MIT License
-
-Copyright (c) 2026 Zhenjie Wang
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-```
+本作品按"现状"（AS IS）提供，不附带任何明示或默示的担保；因使用或无法使用本作品而产生的任何直接或间接损失，作者不承担责任。

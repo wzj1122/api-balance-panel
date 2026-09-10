@@ -1,21 +1,43 @@
-MIT License
+版权所有 © 2026 Zhenjie Wang。保留所有权利。
 
-Copyright (c) 2026 Zhenjie Wang
+本软件（API 余额面板 / api-balance-panel，包括全部源代码、文档、界面设计、图标与随附资源，
+以下称"本作品"）为作者的原创作品，受《中华人民共和国著作权法》及相关国际著作权公约保护。
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+────────────────────────────────────────────────────────────
+一、允许的行为（无需另行许可）
+────────────────────────────────────────────────────────────
+1. 个人学习、研究与自用：可下载、安装、运行本作品用于个人非商业目的；
+2. 在未修改本作品的前提下，可原样分享官方发布页面的下载链接。
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+────────────────────────────────────────────────────────────
+二、需事先取得作者书面许可的行为
+────────────────────────────────────────────────────────────
+未经作者事先书面许可，任何个人或组织不得实施下列行为：
+1. 修改、改编、翻译本作品的源代码或任何组成部分；
+2. 基于本作品进行二次开发或创作衍生作品；
+3. 复制、再分发、公开发布本作品或其任何修改版本（包括以任何形式打包、
+   集成、嵌套到其他产品或服务中）；
+4. 将本作品或其衍生版本用于商业用途（包括销售、租赁、收费服务、
+   以 SaaS / 托管方式对外提供等）；
+5. 移除、遮挡或篡改本作品的版权声明、作者署名与许可声明。
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+────────────────────────────────────────────────────────────
+三、授权申请
+────────────────────────────────────────────────────────────
+如需获得上述许可，请通过电子邮件联系作者，说明使用主体、用途与范围：
+    邮箱：18293592881@163.com
+作者保留自行决定是否授权以及授权条件的权利。
+
+────────────────────────────────────────────────────────────
+四、免责声明
+────────────────────────────────────────────────────────────
+本作品按"现状"（AS IS）提供，不附带任何明示或默示的担保，包括但不限于对
+适销性、特定用途适用性与不侵权的担保。因使用或无法使用本作品而产生的任何
+直接或间接损失，作者不承担责任。
+
+────────────────────────────────────────────────────────────
+五、其他
+────────────────────────────────────────────────────────────
+本许可自 2026-09-10 起生效。作者享有本作品全部未明确授予的权利。
+本作品为源码可见（Source-available）的专有软件，并非开源软件；源码公开仅供
+学习与评估，不代表可以自由使用、修改或再分发。
