@@ -28,7 +28,7 @@
 
 ## 📦 安装（推荐：安装包）
 
-1. 到 [Releases 页面](https://github.com/wzj1122/api-balance-panel/releases) 下载 **`API 余额面板 Setup 1.0.0.exe`**（约 130 MB）。
+1. 到 [Releases 页面](https://github.com/wzj1122/api-balance-panel/releases) 下载最新安装包（约 130 MB）。GitHub 附件名不支持中文，实际下载文件名为 **`API.Setup.v1.0.0.exe`**（安装后的程序/快捷方式名为「API 余额面板」，本地绿色版文件名为 `API 余额面板.exe`）。
 2. 双击运行，跟着安装向导走（默认装到当前用户目录，可点「高级选项」改安装位置）。
 3. 装完后桌面 / 开始菜单出现「API 余额面板」，首次启动如遇 Windows SmartScreen 提示，点 **「更多信息 → 仍要运行」** 即可（个人分发未购买代码签名证书，属正常现象）。
 4. 数据保存在 `%APPDATA%\api-balance-panel\`（`config.json` + `snapshots.json` + `logs\`），备份/换电脑拷贝整个文件夹即可。
