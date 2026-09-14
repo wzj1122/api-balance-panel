@@ -314,7 +314,7 @@ function fmtDate(d: Date): string {
 .seg button.on { background: var(--card); color: var(--acc); font-weight: 600; box-shadow: var(--shadow-sm); }
 .scroll { flex: 1; overflow-y: auto; padding: 8px var(--pad-lg) 40px; }
 .probe-msg { margin: 6px 0 10px; padding: 8px 12px; border-radius: 10px; background: var(--ok-soft); color: var(--tx); font-size: 12.5px; }
-.hero-card { position: relative; background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 22px 26px; box-shadow: var(--shadow-sm); overflow: hidden; background-image: linear-gradient(120deg, var(--acc-soft) 0%, transparent 60%); }
+.hero-card { position: relative; background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 22px 26px; box-shadow: var(--shadow-sm); overflow: hidden; background-image: linear-gradient(120deg, var(--acc-soft) 0%, transparent 60%); margin-bottom: var(--gap); }
 .hero-label { font-size: 12px; color: var(--tx3); font-weight: 600; letter-spacing: 0.4px; }
 .hero-value { font-size: 46px; font-weight: 800; color: var(--tx-strong); line-height: 1.15; margin: 4px 0 2px; font-variant-numeric: tabular-nums; }
 .hero-sub { font-size: 12.5px; color: var(--tx3); }
@@ -324,8 +324,13 @@ function fmtDate(d: Date): string {
 .hg-item { background: var(--panel2); border-radius: 12px; padding: 10px 14px; }
 .hg-k { font-size: 11.5px; color: var(--tx3); }
 .hg-v { font-size: 18px; font-weight: 700; color: var(--tx); font-variant-numeric: tabular-nums; }
-.two-col { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: var(--gap); margin-top: var(--gap); }
+/* 竖向排布统一用 margin-bottom（不用 margin-top）：相邻块间距就是 var(--gap)，
+   不会因为 margin 折叠/相邻而出现「有的有间距、有的贴在一起」 */
+.two-col { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: var(--gap); margin-bottom: var(--gap); }
+/* 顶层卡片：hero / 两列容器 / 说明行都是顶层块，统一 16px 间距；
+   .two-col 里的面板由 grid 的 gap 负责，排除掉避免叠加（:not() 用后代选择器，不支持的老内核会整条忽略，届时只是间距照旧，不影响其它样式） */
 .panel { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px 18px; box-shadow: var(--shadow-sm); }
+.panel:not(.two-col .panel) { margin-bottom: var(--gap); }
 .panel-title { font-size: var(--fs-foot); color: var(--tx3); font-weight: 600; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
 .share-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
 .share-name { width: 96px; flex: none; font-size: 12.5px; color: var(--tx); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -342,7 +347,7 @@ function fmtDate(d: Date): string {
 .ms-list li::marker { color: var(--acc); }
 .hint-box { margin: 30px auto; max-width: 520px; text-align: center; color: var(--tx3); font-size: var(--fs-sub); line-height: 1.8; padding: 22px; background: var(--card); border: 1px dashed var(--line-strong); border-radius: 14px; }
 .hint-box.err { color: var(--err); border-color: var(--err-line); }
-.note-line { margin-top: 14px; font-size: var(--fs-foot); color: var(--tx3); }
+.note-line { margin: 0 0 var(--gap); font-size: var(--fs-foot); color: var(--tx3); }
 .muted { color: var(--tx3); }
 .small { font-size: 11.5px; }
 </style>
