@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC } from '../shared/ipc'
-import type { PanelApi, RefreshPayload } from '../shared/ipc'
+import type { PanelApi, RefreshPayload, AutoStartStatus } from '../shared/ipc'
 import type {
   AccountInput,
   AccountView,
@@ -203,6 +203,11 @@ const api: PanelApi = {
 
   backgroundForTheme(theme: string): Promise<{ name: string | null }> {
     return ipcRenderer.invoke(IPC.BG_FOR_THEME, theme)
+  },
+
+  /** 开机自启的真实状态（主进程回读系统启动项） */
+  getAutoStartStatus(): Promise<AutoStartStatus> {
+    return ipcRenderer.invoke(IPC.APP_AUTOSTART_STATUS)
   },
 
   onWindowState(callback: (state: { maximized: boolean }) => void): () => void {

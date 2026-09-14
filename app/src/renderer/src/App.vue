@@ -19,6 +19,7 @@ import UsageReportView from '@renderer/components/UsageReportView.vue'
 import BudgetBar from '@renderer/components/BudgetBar.vue'
 import OnboardingGuide from '@renderer/components/OnboardingGuide.vue'
 import { backgroundData, backgroundForTheme, listDailyUsage, setDemoMode } from '@renderer/api/ipc'
+import { resolveTheme } from '@renderer/utils/theme'
 
 const {
   accounts,
@@ -50,13 +51,13 @@ const demoOn = ref(false)
 /** 新手引导是否显示 */
 const showOnboard = ref(false)
 
-// 主题：设置驱动（深色 / 浅色 / 跟随系统），写入 data-theme
+// 主题：设置驱动（深色 / 浅色 / 跟随系统 / 设计师主题），写入 data-theme
+// - 深色 / 浅色 = 直接切到对应的经典主题（与「主题外观」页里的「深色（默认）」「浅色（默认）」是同一套）
+// - 跟随系统 = 按系统深浅色，在经典深色与经典浅色之间自动选择
 const darkMedia = window.matchMedia('(prefers-color-scheme: dark)')
 
 function applyTheme(pref: string | undefined): void {
-  // 支持任意主题 slug（设计师主题如 deep-space-dark）；只有 'system' 需要解析成明暗
-  const value = pref && pref.length > 0 ? pref : 'dark'
-  const resolved = value === 'system' ? (darkMedia.matches ? 'dark' : 'light') : value
+  const resolved = resolveTheme(pref, darkMedia.matches)
   document.documentElement.dataset.theme = resolved
   try { localStorage.setItem('panel-theme', resolved) } catch { /* 忽略 */ }
 }
@@ -266,6 +267,7 @@ async function onRemove(id: string) {
 async function onSettingsSave(patch: Parameters<typeof saveSettings>[0]) {
   const r = await saveSettings(patch)
   if (!r.ok && r.error) window.alert('保存失败：' + r.error)
+  return r
 }
 </script>
 

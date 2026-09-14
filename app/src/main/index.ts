@@ -1,5 +1,5 @@
 import { app } from 'electron'
-import { applyAutoStart } from './autostart'
+import { applyAutoStart, refreshAutoStart } from './autostart'
 import { isSecure } from './crypto'
 import { registerIpc } from './ipc'
 import { logger } from './logger'
@@ -9,7 +9,7 @@ import { store } from './store'
 import { runDueMonitors } from './monitor'
 import { refresh } from './query'
 import { createTray, destroyTray, updateTray } from './tray'
-import { createWindow, setQuitting, showMainWindow } from './window'
+import { createWindow, isAutoStartLaunch, setQuitting, showMainWindow } from './window'
 
 /**
  * 应用入口（主进程）。
@@ -79,16 +79,18 @@ void app.whenReady().then(() => {
     }, 60 * 1000)
 
 
-    // 同步开机自启状态到操作系统
-    applyAutoStart(store.getSettings().launch_at_login)
+    // 校准开机自启：配置里开着、但系统启动项被清理过（换机 / 被优化软件删掉）会自动补写
+    refreshAutoStart(store.getSettings().launch_at_login)
 
     // T03：注册全部业务 IPC 通道 + 启动定时刷新
     registerIpc()
     scheduler.start(store.getSettings().refresh_seconds)
 
     // 窗口隐藏/最小化时暂停刷新，回到前台立刻补刷（受 pause_when_hidden 控制）
+    // 例外：开机自启是「后台常驻」启动，窗口自始至终没显示过，必须照常刷新，否则开机后余额永远不更新
+    const silentLaunch = isAutoStartLaunch()
     const pauseIfSet = (): void => {
-      if (store.getSettings().pause_when_hidden) {
+      if (!silentLaunch && store.getSettings().pause_when_hidden) {
         scheduler.pause()
         updateTray(undefined, true)
       }
@@ -103,6 +105,8 @@ void app.whenReady().then(() => {
     win.on('show', resumeIfSet)
     win.on('minimize', pauseIfSet)
     win.on('restore', resumeIfSet)
+    // 托盘提示同步真实的暂停状态（开机自启常驻时不应显示「已暂停刷新」）
+    updateTray(undefined, scheduler.isPaused())
   })
 
   app.on('window-all-closed', () => {

@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { app, dialog } from 'electron'
+import { app, dialog, nativeTheme } from 'electron'
 import { logger } from './logger'
 import { DATA_DIR } from './paths'
 
@@ -18,9 +18,13 @@ function builtinDir(): string {
     : path.join(__dirname, '..', '..', 'resources', 'backgrounds')
 }
 
-/** 主题 → 内置默认背景文件名（默认黑/白对应 dark/light，其余按主题 slug） */
+/**
+ * 主题 → 内置默认背景文件名。
+ * 默认黑/白对应 dark/light，其余按主题 slug；'system'（跟随系统）按系统深浅色落到经典深/浅色。
+ */
 export function backgroundForTheme(theme: string): string | null {
-  const name = theme === 'dark' ? 'builtin-dark.png' : theme === 'light' ? 'builtin-light.png' : theme + '.png'
+  const slug = theme === 'system' ? (nativeTheme.shouldUseDarkColors ? 'dark' : 'light') : theme
+  const name = slug === 'dark' ? 'builtin-dark.png' : slug === 'light' ? 'builtin-light.png' : slug + '.png'
   try {
     return fs.existsSync(path.join(builtinDir(), name)) ? name : null
   } catch {

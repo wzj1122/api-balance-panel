@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { REFRESH_OPTIONS } from '@shared/constants'
+import type { AutoStartStatus } from '@shared/ipc'
 import type { AppInfo, Settings } from '@shared/types'
-import { exportBackup, importBackup, openDataDir } from '@renderer/api/ipc'
+import { exportBackup, getAutoStartStatus, importBackup, openDataDir } from '@renderer/api/ipc'
 import InfoTip from './InfoTip.vue'
 import SelectMenu from './SelectMenu.vue'
 
@@ -14,7 +15,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: 'save', patch: Partial<Settings>): void
+  (e: 'save', patch: Partial<Settings>): Promise<{ ok: boolean; error?: string }>
 }>()
 
 const local = reactive({
@@ -24,7 +25,8 @@ const local = reactive({
   notice_enabled: true,
   notice_max_per_day: 1,
   launch_at_login: false,
-  theme: 'dark' as 'dark' | 'light' | 'system',
+  /** 主题标识：'dark' / 'light' / 'system'，也可能是设计师主题 slug */
+  theme: 'dark' as string,
   drop_alert_percent: 30,
   fail_alert_count: 3,
   daily_budget: {} as Record<string, number>
@@ -35,6 +37,41 @@ const backupMsg = ref('')
 const savedFlash = ref(false)
 let savedTimer: ReturnType<typeof setTimeout> | null = null
 
+/** 开机自启：主进程回读到的**真实**系统状态（不是配置里的期望值） */
+const autoStart = ref<AutoStartStatus | null>(null)
+const autoStartMsg = ref('')
+const autoStartBusy = ref(false)
+
+async function loadAutoStart(): Promise<void> {
+  const r = await getAutoStartStatus()
+  autoStart.value = r.ok ? r.data : null
+  autoStartMsg.value = r.ok ? '' : r.error
+}
+onMounted(() => { void loadAutoStart() })
+
+/** 开关切换：立即落盘 + 立即写/删系统启动项，写入完成后再回读真实状态显示 */
+async function onToggleAutoStart(e: Event): Promise<void> {
+  const on = (e.target as HTMLInputElement).checked
+  autoStartBusy.value = true
+  try {
+    local.launch_at_login = on
+    // emit('save') 返回父组件 saveSettings 的 Promise，await 之后系统启动项已经写完
+    await emit('save', { launch_at_login: on })
+    await loadAutoStart()
+  } finally {
+    autoStartBusy.value = false
+  }
+}
+
+/** 主题：点一下立即生效并保存（与「主题外观」页同一套主题，双向联动） */
+async function pickTheme(t: string): Promise<void> {
+  local.theme = t
+  await emit('save', { theme: t })
+  savedFlash.value = true
+  if (savedTimer) clearTimeout(savedTimer)
+  savedTimer = setTimeout(() => { savedFlash.value = false }, 1800)
+}
+
 function init() {
   const s = props.settings
   if (s) {
@@ -44,7 +81,8 @@ function init() {
     local.notice_enabled = s.notice_enabled
     local.notice_max_per_day = s.notice_max_per_day
     local.launch_at_login = s.launch_at_login
-    local.theme = s.theme === 'light' || s.theme === 'system' ? s.theme : 'dark'
+    // 主题标识原样带入：'dark' / 'light' / 'system' 或设计师主题 slug（与「主题外观」页共用同一个字段）
+    local.theme = s.theme
     local.drop_alert_percent = s.drop_alert_percent ?? 30
     local.fail_alert_count = s.fail_alert_count ?? 3
     local.daily_budget = { ...(s.daily_budget ?? {}) }
@@ -224,10 +262,11 @@ async function onImport() {
         <div class="field-inline">
           <span class="f-label">主题</span>
           <div class="seg">
-            <button type="button" :class="{ on: local.theme === 'dark' }" @click="local.theme = 'dark'">深色</button>
-            <button type="button" :class="{ on: local.theme === 'light' }" @click="local.theme = 'light'">浅色</button>
-            <button type="button" :class="{ on: local.theme === 'system' }" @click="local.theme = 'system'">跟随系统</button>
+            <button type="button" :class="{ on: local.theme === 'dark' }" @click="pickTheme('dark')">深色</button>
+            <button type="button" :class="{ on: local.theme === 'light' }" @click="pickTheme('light')">浅色</button>
+            <button type="button" :class="{ on: local.theme === 'system' }" @click="pickTheme('system')">跟随系统</button>
           </div>
+          <span class="hint-inline">点一下立即生效并保存：「深色 / 浅色」就是「主题外观」里的经典深色 / 经典浅色；「跟随系统」按 Windows 深浅色自动在这两套之间切换。</span>
         </div>
       </div>
 
@@ -236,11 +275,24 @@ async function onImport() {
         <div class="field-inline">
           <span class="f-label">开机自启</span>
           <label class="switch">
-            <input v-model="local.launch_at_login" type="checkbox" />
+            <input
+              type="checkbox"
+              :checked="local.launch_at_login"
+              :disabled="autoStartBusy"
+              @change="onToggleAutoStart"
+            />
             <span class="sw-track"><span class="sw-thumb"></span></span>
           </label>
+          <span class="hint-inline">点一下立即写入系统启动项，无需再点「保存设置」</span>
         </div>
-        <p class="hint">仅在安装版中生效，开发调试模式不会写入系统开机启动项。</p>
+        <p v-if="autoStartMsg" class="hint err-hint">{{ autoStartMsg }}</p>
+        <p
+          v-else-if="autoStart"
+          class="hint"
+          :class="{ 'err-hint': local.launch_at_login && autoStart.packaged && !autoStart.registered, 'ok-hint': autoStart.registered && !autoStart.disabledBySystem }"
+        >
+          {{ autoStart.message }}
+        </p>
       </div>
 
       <div class="sec">
@@ -300,6 +352,9 @@ async function onImport() {
 .inline-input { font-size: var(--fs-sub); color: var(--tx2); display: inline-flex; align-items: center; gap: 6px; }
 .input.mini { width: 120px; }
 .hint { font-size: var(--fs-foot); color: var(--tx3); margin: 4px 0 8px; line-height: 1.7; }
+.hint-inline { font-size: var(--fs-foot); color: var(--tx3); line-height: 1.7; }
+.hint.err-hint { color: var(--warn); }
+.hint.ok-hint { color: var(--ok); }
 .seg { display: inline-flex; gap: 4px; background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 3px; }
 .seg button { border: none; background: transparent; color: var(--tx2); font-size: var(--fs-sub); font-weight: 500; padding: 5px 14px; border-radius: 8px; cursor: pointer; transition: background var(--dur) ease, color var(--dur) ease; }
 .seg button.on { background: var(--card); color: var(--acc); font-weight: 600; box-shadow: var(--shadow-sm); }

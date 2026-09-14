@@ -1,5 +1,5 @@
 import { IPC } from '@shared/ipc'
-import type { PanelApi, RefreshPayload } from '@shared/ipc'
+import type { AutoStartStatus, PanelApi, RefreshPayload } from '@shared/ipc'
 import type {
   AccountInput,
   AccountView,
@@ -168,6 +168,9 @@ export async function safeInvoke<T = unknown>(
         break
       case IPC.BG_FOR_THEME:
         res = await api.backgroundForTheme(payload as string)
+        break
+      case IPC.APP_AUTOSTART_STATUS:
+        res = await api.getAutoStartStatus()
         break
       case IPC.WINDOW_MINIMIZE:
         res = await api.windowMinimize()
@@ -358,6 +361,11 @@ export async function backgroundData(name: string): Promise<RpcResult<{ ok: bool
 /** 主题对应的内置默认背景 */
 export async function backgroundForTheme(theme: string): Promise<RpcResult<{ name: string | null }>> {
   return safeInvoke<{ name: string | null }>(IPC.BG_FOR_THEME, theme)
+}
+
+/** 开机自启的真实状态（主进程回读系统启动项，不是配置里的期望值） */
+export async function getAutoStartStatus(): Promise<RpcResult<AutoStartStatus>> {
+  return safeInvoke<AutoStartStatus>(IPC.APP_AUTOSTART_STATUS)
 }
 
 // ---------- 自绘标题栏的窗口控制 ----------

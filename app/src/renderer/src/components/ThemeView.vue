@@ -6,7 +6,7 @@ import InfoTip from './InfoTip.vue'
 import SelectMenu from './SelectMenu.vue'
 
 const props = defineProps<{ settings: Settings | null }>()
-const emit = defineEmits<{ (e: 'save', patch: Partial<Settings>): void }>()
+const emit = defineEmits<{ (e: 'save', patch: Partial<Settings>): Promise<{ ok: boolean; error?: string }> }>()
 
 interface ThemeDef { slug: string; name: string; desc: string }
 
@@ -14,7 +14,7 @@ interface ThemeDef { slug: string; name: string; desc: string }
 const THEMES: ThemeDef[] = [
   { slug: 'dark', name: '深色（默认）', desc: '经典深色' },
   { slug: 'light', name: '浅色（默认）', desc: '经典浅色' },
-  { slug: 'system', name: '跟随系统', desc: '随系统自动切换' },
+  { slug: 'system', name: '跟随系统', desc: '按系统用经典深/浅色' },
   { slug: 'deep-space-dark', name: '深空蓝 · 深', desc: '冷静深邃' },
   { slug: 'deep-space-light', name: '深空蓝 · 浅', desc: '清爽天蓝' },
   { slug: 'fluent-acrylic-dark', name: '亚克力 · 深', desc: '柔光毛玻璃' },

@@ -6,8 +6,9 @@ import { app } from 'electron'
 /**
  * 数据目录与文件常量。
  *
- * 依赖 package.json 的 name（api-balance-panel），改名会导致老配置"找不到"，
- * 一期定名后不再改。
+ * 注意：Electron 的 userData 取的是 package.json 的 **productName**（打包后是 `%APPDATA%\API 余额面板\`），
+ * 开发模式没有 productName 时才会退回 `name`（api-balance-panel）。改这两个字段都会导致老配置"找不到"，
+ * 所以一期定名后不再改。
  */
 
 /** app 尚未初始化时的兜底目录，避免模块加载期就崩 */
@@ -23,7 +24,7 @@ function resolveDataDir(): string {
   }
 }
 
-/** 数据根目录：Windows 下 %APPDATA%\api-balance-panel\ */
+/** 数据根目录：打包后 Windows 下是 %APPDATA%\API 余额面板\ */
 export const DATA_DIR: string = resolveDataDir()
 
 /** 主配置文件 */

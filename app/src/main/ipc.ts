@@ -3,7 +3,7 @@ import { MIMO_BALANCE_URL } from '../shared/constants'
 import { IPC } from '../shared/ipc'
 import type { RefreshPayload } from '../shared/ipc'
 import type { AccountInput, AppInfo, MonitorInput, ReportPeriod, Settings, LogLevel, KeyVaultInput } from '../shared/types'
-import { applyAutoStart } from './autostart'
+import { applyAutoStart, getAutoStartStatus } from './autostart'
 import { backgroundData, backgroundForTheme, importBackground, listBackgrounds, removeBackground } from './bgstore'
 import { exportBackup, importBackup } from './backup'
 import { buildMonitorReport, listChecks, removeMonitor, removeMonitorsBySecret, runMonitors, saveMonitor, testMonitor } from './monitor'
@@ -115,6 +115,9 @@ export function registerIpc(): void {
   // 读设置
   wrap(IPC.SETTINGS_GET, () => store.getSettings())
 
+  // 开机自启的真实状态（回读系统启动项，界面据此显示，而不是照抄配置）
+  wrap(IPC.APP_AUTOSTART_STATUS, () => getAutoStartStatus())
+
   // 局部更新设置；刷新间隔变了就热重启定时器
   wrap(IPC.SETTINGS_SAVE, (payload) => {
     const patch = asRecord(payload) as unknown as Partial<Settings>
@@ -124,7 +127,11 @@ export function registerIpc(): void {
       scheduler.reset(after.refresh_seconds)
     }
     if (after.launch_at_login !== before.launch_at_login) {
-      applyAutoStart(after.launch_at_login)
+      // 写系统启动项并把真实结果记进日志；界面随后会用 APP_AUTOSTART_STATUS 回读显示
+      const st = applyAutoStart(after.launch_at_login)
+      if (after.launch_at_login && !st.registered && st.packaged) {
+        logger.warn('[autostart] 已开启但系统启动项未写入成功，请查看界面提示')
+      }
     }
     return after
   })

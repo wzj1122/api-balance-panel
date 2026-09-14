@@ -21,7 +21,19 @@ export function setQuitting(value: boolean): void {
   isQuitting = value
 }
 
+/**
+ * 是否本次启动来自「开机自启」。
+ * 由 autostart 写入系统启动项时带上 `--open-at-login`；这种启动不弹窗口，
+ * 只常驻托盘后台刷新（用户点托盘或快捷方式再显示主面板）。
+ */
+export function isAutoStartLaunch(argv: string[] = process.argv): boolean {
+  return argv.includes('--open-at-login')
+}
+
 export function createWindow(): BrowserWindow {
+  // 开机自启：直接后台常驻，不抢用户的开机画面
+  const silent = isAutoStartLaunch()
+  if (silent) logger.info('[window] 开机自启启动：主窗口保持隐藏，仅常驻托盘')
   const win = new BrowserWindow({
     width: 1100,
     height: 760,
@@ -44,6 +56,10 @@ export function createWindow(): BrowserWindow {
   })
 
   win.once('ready-to-show', () => {
+    if (silent) {
+      logger.info('[window] 开机自启启动，不显示窗口（托盘常驻）')
+      return
+    }
     win.show()
     logger.info('[window] 主窗口已显示')
   })

@@ -4,7 +4,7 @@
 
 - 技术栈：Electron 44 + Vue 3 + Vite 7 + TypeScript（electron-vite 三段构建）
 - 运行环境：Windows 11 / Node 22
-- 数据存放：`%APPDATA%\api-balance-panel\`（`config.json` + `snapshots.json` + `logs\`）
+- 数据存放：`%APPDATA%\API 余额面板\`（`config.json` + `snapshots.json` + `logs\`；打包后 userData 取 `productName`）
 
 ## 一、安装与启动
 

@@ -98,8 +98,26 @@ export const IPC = {
   BG_REMOVE: 'bg:remove',
   BG_DATA: 'bg:data',
   /** 主题对应的内置默认背景 */
-  BG_FOR_THEME: 'bg:for-theme'
+  BG_FOR_THEME: 'bg:for-theme',
+  /** invoke：读开机自启的真实状态（回读注册表，不是配置里的期望值） */
+  APP_AUTOSTART_STATUS: 'app:autostart-status'
 } as const
+
+/** 开机自启状态（主进程回读系统得到的事实） */
+export interface AutoStartStatus {
+  /** 平台是否支持（目前仅 Windows） */
+  supported: boolean
+  /** 是否安装版（开发模式不写系统启动项） */
+  packaged: boolean
+  /** 系统启动项里是否已注册本程序 */
+  registered: boolean
+  /** 注册的启动命令行 */
+  command: string
+  /** 是否被 Windows「任务管理器 → 启动」禁用 */
+  disabledBySystem: boolean
+  /** 一句话状态说明（界面直接展示） */
+  message: string
+}
 
 /** 刷新余额的入参 */
 export interface RefreshPayload {
@@ -228,6 +246,8 @@ export interface PanelApi {
 
   /** 某主题对应的内置默认背景文件名（没有则 name 为 null） */
   backgroundForTheme(theme: string): Promise<{ name: string | null }>
+  /** 开机自启的真实状态（主进程回读系统启动项） */
+  getAutoStartStatus(): Promise<AutoStartStatus>
   /** 订阅单条结果，返回取消订阅函数 */
   onBalanceRow(callback: (row: BalanceRow) => void): () => void
   /** 订阅整批结果，返回取消订阅函数 */
