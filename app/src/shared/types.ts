@@ -21,6 +21,7 @@ export type AccountType =
   | 'minimax'
   | 'zhipu'
   | 'aliyun'
+  | 'sensenova'
 
 /** 统一错误码：适配器只抛码，人话文案由主进程 errors.ts 统一产出 */
 export type ErrorCode =

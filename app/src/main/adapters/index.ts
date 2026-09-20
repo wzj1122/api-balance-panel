@@ -1,6 +1,7 @@
 import { aliyunAdapter } from './aliyun'
 import { minimaxAdapter } from './minimax'
 import { mimoPlanAdapter } from './mimo-plan'
+import { sensenovaAdapter } from './sensenova'
 import { zhipuAdapter } from './zhipu'
 import type { AccountType } from '../../shared/types'
 import { AdapterError } from '../errors'
@@ -24,7 +25,8 @@ export const PROVIDERS: Record<AccountType, Adapter> = {
   'mimo-plan': mimoPlanAdapter,
   minimax: minimaxAdapter,
   zhipu: zhipuAdapter,
-  aliyun: aliyunAdapter
+  aliyun: aliyunAdapter,
+  sensenova: sensenovaAdapter
 }
 
 /** 取某类型的适配器；未知类型抛 UNKNOWN_TYPE（界面显示"未知的平台类型"） */

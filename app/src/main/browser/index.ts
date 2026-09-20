@@ -1,5 +1,10 @@
 import { BrowserWindow, session, type Session } from 'electron'
-import { MINIMAX_ACCOUNT_URL, MINIMAX_BACKEND, MINIMAX_BACKEND_CN } from '../../shared/constants'
+import {
+  MINIMAX_ACCOUNT_URL,
+  MINIMAX_BACKEND,
+  MINIMAX_BACKEND_CN,
+  SENSENOVA_POOL_USAGE_URL
+} from '../../shared/constants'
 import { logger } from '../logger'
 
 /**
@@ -36,6 +41,10 @@ export interface LoginOptions {
   validate?: (cookie: string) => Promise<string | null>
   /** 自动关闭规则：窗口进入这些地址后开始轮询校验，通过就自动关窗 */
   success?: LoginSuccessRule
+  /** 登录态存在 localStorage 里的键名（商汤等平台：额度接口只认 Bearer token，Cookie 无效） */
+  tokenKey?: string
+  /** 抓完 token 后立即校验（与 validate 二选一，tokenKey 存在时用它） */
+  validateToken?: (token: string) => Promise<string | null>
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -57,9 +66,28 @@ async function collectCookies(ses: Session, urls: string[]): Promise<string> {
 }
 
 /**
+ * 从登录窗口页面里读 localStorage 的登录态（tokenKey）。
+ * 用于「额度接口只认 Bearer token」的平台（商汤日日新）：Cookie 抓了也没用，必须拿 token。
+ * 读不到（没登录 / 还没写进去）返回空串，由调用方继续轮询。
+ */
+async function collectToken(win: BrowserWindow, key: string): Promise<string> {
+  try {
+    const v = await win.webContents.executeJavaScript(
+      `(() => { try { return localStorage.getItem(${JSON.stringify(key)}) || '' } catch (e) { return '' } })()`,
+      true
+    )
+    return typeof v === 'string' ? v : ''
+  } catch {
+    // 页面还在加载 / 已销毁：当作暂时读不到
+    return ''
+  }
+}
+
+/**
  * 打开登录窗口（直达登录表单页）。
- * 登录成功（URL 回到控制台 + 校验通过）时自动关闭窗口并返回 Cookie；
- * 校验失败的 Cookie 不会返回（避免存坏数据），未配置成功规则时保持手动关闭。
+ * 登录成功（URL 回到控制台 + 校验通过）时自动关闭窗口并返回凭据；
+ * 凭据有二选一：Cookie（默认）或 localStorage 里的 token（tokenKey，商汤等平台）。
+ * 校验失败的凭据不会返回（避免存坏数据），未配置成功规则时保持手动关闭。
  */
 export function loginToSite(opts: LoginOptions): Promise<LoginResult> {
   return new Promise((resolve) => {
@@ -87,6 +115,23 @@ export function loginToSite(opts: LoginOptions): Promise<LoginResult> {
     })
 
     const urls = opts.extraUrls && opts.extraUrls.length ? [opts.url, ...opts.extraUrls] : [opts.url]
+    /** 本次要抓的凭据类型：配了 tokenKey 就抓 token，否则抓 Cookie */
+    const wantToken = typeof opts.tokenKey === 'string' && opts.tokenKey.length > 0
+
+    /** 取当前凭据（token 或 Cookie），并做即时校验；返回 null = 通过 */
+    const grabCredential = async (): Promise<{ value: string; error: string | null }> => {
+      if (wantToken) {
+        const token = await collectToken(win, opts.tokenKey as string)
+        if (!token) return { value: '', error: '还在等待登录…（还没读到登录态）' }
+        const err = opts.validateToken ? await opts.validateToken(token) : null
+        return { value: token, error: err }
+      }
+      const cookie = await collectCookies(ses, urls)
+      if (!cookie) return { value: '', error: '还没抓到登录 Cookie' }
+      const err = opts.validate ? await opts.validate(cookie) : null
+      return { value: cookie, error: err }
+    }
+
     let settled = false
     let autoClosing = false
     let matchedAt = 0
@@ -112,15 +157,12 @@ export function loginToSite(opts: LoginOptions): Promise<LoginResult> {
       logger.info('[browser] ' + opts.name + ' 开始校验登录状态…')
       while (!settled) {
         try {
-          const cookieStr = await collectCookies(ses, urls)
-          if (cookieStr) {
-            const err = opts.validate ? await opts.validate(cookieStr) : null
-            if (err === null) {
-              try { win.setTitle('登录 ' + opts.name + '（校验通过，即将自动关闭）') } catch { /* 忽略 */ }
-              await sleep(600) // 留一点时间给最后一批 Cookie 落盘
-              closeWin()
-              return
-            }
+          const { value, error } = await grabCredential()
+          if (value && error === null) {
+            try { win.setTitle('登录 ' + opts.name + '（校验通过，即将自动关闭）') } catch { /* 忽略 */ }
+            await sleep(600) // 留一点时间给最后一批凭据落盘
+            closeWin()
+            return
           }
         } catch (e) {
           logger.warn('[browser] 自动校验失败：' + (e as Error).message)
@@ -144,6 +186,24 @@ export function loginToSite(opts: LoginOptions): Promise<LoginResult> {
       settled = true
       void (async () => {
         try {
+          if (wantToken) {
+            const token = await collectToken(win, opts.tokenKey as string)
+            if (!token) {
+              resolve({ ok: false, error: '没有读到登录态，请确认已经登录成功后再关闭窗口' })
+              return
+            }
+            if (opts.validateToken) {
+              const err = await opts.validateToken(token)
+              if (err) {
+                logger.warn('[browser] ' + opts.name + ' 登录态校验未通过：' + err)
+                resolve({ ok: false, error: err })
+                return
+              }
+            }
+            logger.info('[browser] ' + opts.name + ' 登录完成，已获取登录态（token 长度 ' + token.length + '）')
+            resolve({ ok: true, cookie: token })
+            return
+          }
           const cookieStr = await collectCookies(ses, urls)
           if (!cookieStr) {
             resolve({ ok: false, error: '没有抓到登录 Cookie，请确认已经登录成功后再关闭窗口' })
@@ -160,7 +220,7 @@ export function loginToSite(opts: LoginOptions): Promise<LoginResult> {
           }
           resolve({ ok: true, cookie: cookieStr })
         } catch (e) {
-          resolve({ ok: false, error: '读取 Cookie 失败：' + (e as Error).message })
+          resolve({ ok: false, error: '读取登录凭据失败：' + (e as Error).message })
         }
       })()
     })
@@ -206,6 +266,24 @@ export function validateByUrl(url: string, opts?: { okStatuses?: number[] }): (c
 
 export function cookieHas(name: string): (cookie: string) => Promise<string | null> {
   return async (cookie) => (cookie.indexOf(name + '=') >= 0 ? null : '还在等待登录…')
+}
+
+/**
+ * 商汤日日新登录态校验：用抓到的 token 真实调一次额度接口，能通才算登录成功。
+ * 这样不依赖页面上出现的任何文案，也不怕平台改版。
+ */
+export async function validateSenseNovaToken(token: string): Promise<string | null> {
+  try {
+    const r = await fetch(SENSENOVA_POOL_USAGE_URL, {
+      headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' },
+      signal: AbortSignal.timeout(10000)
+    })
+    if (r.status === 200) return null
+    if (r.status === 401 || r.status === 403) return '还在等待登录…（额度接口返回 ' + r.status + '）'
+    return '额度接口返回 ' + r.status + '，请确认已经在控制台里登录成功'
+  } catch (e) {
+    return '校验请求失败：' + (e as Error).message
+  }
 }
 
 /**

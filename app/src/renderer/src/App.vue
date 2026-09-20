@@ -125,17 +125,26 @@ const failCount = computed(() => rows.value.filter((r) => !r.ok).length)
 
 /** 概览页分组（可折叠） */
 const GROUPS: { key: string; label: string; types: AccountType[] }[] = [
-  // API 令牌 = 用 API Key 访问的平台；Cookie 登录型（硅基流动等）属于钱包余额
+  // API 令牌 = 用 API Key 访问的平台；登录态型（硅基流动、商汤日日新等）属于套餐/额度
   { key: 'token', label: 'API 令牌', types: ['deepseek', 'newapi', 'custom'] },
   { key: 'wallet', label: '钱包余额', types: ['siliconflow', 'mimo', 'minimax', 'zhipu', 'aliyun'] },
-  { key: 'plan', label: '套餐', types: ['mimo-plan'] }
+  // 套餐 / 额度类：小米 MiMo 套餐、商汤日日新 Token Plan（都是「额度池」口径）
+  { key: 'plan', label: '套餐 / 额度', types: ['mimo-plan', 'sensenova'] }
 ]
 const collapsed = ref<Set<string>>(new Set())
-const groupRows = computed(() =>
-  GROUPS.map((g) => ({ ...g, rows: rows.value.filter((r) => g.types.includes(r.type)) })).filter(
-    (g) => g.rows.length > 0
-  )
-)
+/** 兜底：没被任何分组列到的类型（新增平台忘了加分组时）也要显示出来，避免"账号存在但看不到" */
+const OTHER_TYPES = computed(() => {
+  const known = new Set(GROUPS.flatMap((g) => g.types))
+  return Array.from(new Set(rows.value.map((r) => r.type).filter((t) => !known.has(t))))
+})
+const groupRows = computed(() => {
+  const groups = GROUPS.map((g) => ({ ...g, rows: rows.value.filter((r) => g.types.includes(r.type)) }))
+  if (OTHER_TYPES.value.length > 0) {
+    groups.push({ key: 'other', label: '其他', types: OTHER_TYPES.value as AccountType[],
+      rows: rows.value.filter((r) => OTHER_TYPES.value.includes(r.type)) })
+  }
+  return groups.filter((g) => g.rows.length > 0)
+})
 function toggleGroup(key: string) {
   const s = new Set(collapsed.value)
   if (s.has(key)) s.delete(key)

@@ -30,7 +30,8 @@ const PLATFORM_COLORS: Record<AccountType, string> = {
   'mimo-plan': 'var(--p-mimo-plan)',
   minimax: 'var(--p-minimax)',
   zhipu: 'var(--p-zhipu)',
-  aliyun: 'var(--p-aliyun)'
+  aliyun: 'var(--p-aliyun)',
+  sensenova: 'var(--p-sensenova)'
 }
 
 /** 平台显示名，如「DeepSeek 官方」 */

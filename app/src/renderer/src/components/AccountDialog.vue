@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { loginSite } from '@renderer/api/ipc'
 import {
   ACCOUNT_TYPES,
@@ -8,6 +8,7 @@ import {
   MIMO_LOGIN_URL,
   MINIMAX_LOGIN_URL,
   PROVIDER_META,
+  SENSENOVA_CONSOLE_URL,
   SILICONFLOW_LOGIN_URL,
   ZHIPU_LOGIN_URL
 } from '@shared/constants'
@@ -146,16 +147,28 @@ function toggleReveal() {
   reveal.value = !reveal.value
 }
 
-/** 平台 → 登录页（Cookie 来源） */
+/** 平台 → 登录页（Cookie / 登录态来源） */
 const LOGIN_URLS: Partial<Record<AccountType, string>> = {
   mimo: MIMO_LOGIN_URL,
   'mimo-plan': MIMO_LOGIN_URL,
   siliconflow: SILICONFLOW_LOGIN_URL,
   minimax: MINIMAX_LOGIN_URL,
-  zhipu: ZHIPU_LOGIN_URL
+  zhipu: ZHIPU_LOGIN_URL,
+  sensenova: SENSENOVA_CONSOLE_URL
 }
 
-/** 打开内置浏览器登录平台（MiMo / MiMo 套餐 / 硅基流动 / MiniMax / 智谱），登录完成后抓取 Cookie 填入 secret */
+/** 该平台的凭据叫法：商汤日日新的额度接口只认登录态，不认 Cookie */
+const loginCredentialLabel = computed(() => (form.type === 'sensenova' ? '登录态' : '登录 Cookie'))
+
+/** 登录说明补充（各平台凭据有效期不同） */
+const loginHintExtra = computed(() => {
+  if (form.type === 'sensenova') return '额度接口只认登录态（不认 API Key），登录态约 3 小时过期，过期后点「重新登录」即可。'
+  if (form.type === 'mimo' || form.type === 'mimo-plan') return 'Cookie 约 24 小时过期，过期后点「重新登录」即可。'
+  return 'Cookie 由程序自动保存，失效后卡片会提示重新登录。'
+})
+
+/** 打开内置浏览器登录平台（MiMo / MiMo 套餐 / 硅基流动 / MiniMax / 智谱 / 商汤日日新），
+ *  登录完成后抓取凭据（Cookie 或登录态 token）填入 secret */
 async function doLogin() {
   loginBusy.value = true
   loginStatus.value = ''
@@ -166,9 +179,11 @@ async function doLogin() {
   loginBusy.value = false
   if (r.ok && r.data?.cookie) {
     form.secret = r.data.cookie
-    loginStatus.value = '已获取 Cookie，保存后自动抓取余额'
+    loginStatus.value = form.type === 'sensenova'
+      ? '已获取登录态，保存后自动抓取额度（约 3 小时过期，过期后重新登录即可）'
+      : '已获取 Cookie，保存后自动抓取余额'
   } else {
-    loginStatus.value = r.ok ? r.data?.error || '未获取到 Cookie' : r.error
+    loginStatus.value = r.ok ? r.data?.error || '未获取到登录凭据' : r.error
   }
 }
 
@@ -199,7 +214,7 @@ function validate(): boolean {
         errors.secret = '请填写 AccessKey ID 与 AccessKey Secret'
       }
     } else if (!form.secret.trim() && !hasExisting) {
-      errors.secret = m.needLogin ? '请先点击「登录」获取 Cookie' : '请填写密钥 / 令牌'
+      errors.secret = m.needLogin ? '请先点「' + (form.type === 'sensenova' ? '登录并获取' : '登录') + '」获取' + (form.type === 'sensenova' ? '登录态' : 'Cookie') : '请填写密钥 / 令牌'
     }
   }
 
@@ -346,7 +361,7 @@ function onSave() {
       <!-- 需要登录的平台（MiMo / 硅基流动）：登录获取 Cookie -->
       <template v-if="meta().needLogin">
         <div class="field">
-          <label class="label">登录 Cookie<span class="req">*</span></label>
+          <label class="label">{{ loginCredentialLabel }}<span class="req">*</span></label>
           <div class="login-row">
             <button class="btn" type="button" :disabled="loginBusy" @click="doLogin">
               <svg class="ico" viewBox="0 0 16 16" width="14" height="14">
@@ -355,13 +370,13 @@ function onSave() {
                   d="M8 3a5 5 0 1 0 4.6 3H11a3.5 3.5 0 1 1-.9-2.3L9.2 4.4H12V2L9.6 2.2A5 5 0 0 0 8 3Z"
                 />
               </svg>
-              {{ loginBusy ? '等待登录…' : form.secret ? '重新登录' : '登录获取 Cookie' }}
+              {{ loginBusy ? '等待登录…' : form.secret ? '重新登录' : '登录并获取' }}
             </button>
             <span v-if="form.secret && !loginBusy" class="ok-text">✓ 已获取</span>
           </div>
           <div v-if="loginStatus" class="hint">{{ loginStatus }}</div>
           <div v-if="errors.secret" class="err-text">⚠ {{ errors.secret }}</div>
-          <div class="hint">点「登录」会直接打开这个平台的登录页，登录成功后窗口会自动检测并关闭，无需手动操作。{{ form.type === 'mimo' || form.type === 'mimo-plan' ? 'Cookie 约 24 小时过期，过期后点「重新登录」即可。' : 'Cookie 由程序自动保存，失效后卡片会提示重新登录。' }}</div>
+          <div class="hint">点「登录」会直接打开这个平台的登录页，登录成功后窗口会自动检测并关闭，无需手动操作。{{ loginHintExtra }}</div>
         </div>
       </template>
       <!-- 一键添加另一种方式（MiMo ⇄ 套餐，共用登录状态） -->

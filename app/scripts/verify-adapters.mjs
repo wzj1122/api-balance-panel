@@ -14,6 +14,48 @@ const root = process.cwd()
 const tmpDir = path.join(root, 'scripts', '.verify')
 mkdirSync(tmpDir, { recursive: true })
 
+/**
+ * 把 electron 换成桩：适配器链路是 adapters → logger → paths → electron，
+ * 而 electron 包的入口在 Node 里会 require('child_process') 去下载二进制，
+ * 打成 ESM 后会直接报「Dynamic require of "child_process" is not supported」。
+ * 这里只需要 paths/logger/crypto 用到的那几个 API，给个最小桩即可。
+ */
+const electronStub = {
+  name: 'stub-electron',
+  setup(b) {
+    const contents = `
+      const noop = () => {}
+      export const app = {
+        getPath: () => process.env.DSH_VERIFY_DATA_DIR || process.cwd(),
+        getName: () => 'verify',
+        getVersion: () => '0.0.0',
+        isPackaged: false,
+        on: noop,
+        whenReady: () => Promise.resolve(),
+        quit: noop
+      }
+      export const safeStorage = {
+        isEncryptionAvailable: () => false,
+        encryptString: (s) => Buffer.from(String(s), 'utf8'),
+        decryptString: (b) => Buffer.from(b).toString('utf8')
+      }
+      export const nativeTheme = { shouldUseDarkColors: false, on: noop }
+      export const dialog = { showOpenDialog: async () => ({ canceled: true, filePaths: [] }), showSaveDialog: async () => ({ canceled: true }) }
+      export const shell = { openPath: async () => '', openExternal: async () => {} }
+      export class BrowserWindow {}
+      export class Tray {}
+      export class Menu { static buildFromTemplate() { return {} } }
+      export const Notification = class { static isSupported() { return false } }
+      export const ipcMain = { handle: noop }
+      export const nativeImage = { createFromPath: () => ({ isEmpty: () => true }), createEmpty: () => ({}) }
+      export const session = { fromPartition: () => ({ cookies: { get: async () => [] }, clearStorageData: async () => {} }) }
+      export default { app, safeStorage, nativeTheme, dialog, shell }
+    `
+    b.onResolve({ filter: /^electron$/ }, () => ({ path: 'electron-stub', namespace: 'stub' }))
+    b.onLoad({ filter: /.*/, namespace: 'stub' }, () => ({ contents, loader: 'js' }))
+  }
+}
+
 async function bundle(entry, name) {
   const outfile = path.join(tmpDir, `${name}.mjs`)
   await build({
@@ -23,7 +65,8 @@ async function bundle(entry, name) {
     format: 'esm',
     target: 'node22',
     outfile,
-    logLevel: 'silent'
+    logLevel: 'silent',
+    plugins: [electronStub]
   })
   return await import(pathToFileURL(outfile).href + '?t=' + Date.now())
 }
@@ -33,6 +76,7 @@ const { PROVIDERS } = await bundle('src/main/adapters/index.ts', 'adapters')
 // ---- siliconflow 控制台 mock（页面 -> SF_SUBJECT_ID -> walletd 接口） ----
 let SF_MODE = 'ok' // ok | expired | loginwall
 let ALIYUN_MODE = 'ok' // ok | badkey | notfound
+let SN_MODE = 'ok' // ok | expired | nopool（商汤日日新）
 let SF_SUBJECT_SEEN = ''
 const SF_SID = 'mocksubject12345'
 const SF_HTML_OK =
@@ -201,6 +245,37 @@ globalThis.fetch = async (url, opts) => {
       return json(200, { Code: 'Success', Data: { Items: [] } })
     }
     return json(200, { Code: 'Success', Data: {} })
+  }
+  // ---------- 商汤 日日新（SenseNova）Token Plan 双积分池 ----------
+  if (u.includes('platform.sensenova.cn/lite/console/v1/tokenplan/pool-usage')) {
+    const headers = (opts && opts.headers) || {}
+    const auth = headers.Authorization || headers.authorization || ''
+    if (!/^Bearer\s+\S+/.test(auth)) {
+      // 真实线上：没有 Authorization 头 → 401 Unauthenticated
+      return json(401, { code: 16, message: 'Unauthenticated', error_key: 'auth_header_missing' })
+    }
+    if (SN_MODE === 'expired') return json(401, { code: 16, message: 'Unauthenticated', error_key: 'token_expired' })
+    if (SN_MODE === 'nopool') return json(200, { plan: { id: 'free', name: 'Free Plan' }, pools: [] })
+    // 真实线上结构（2026-09-20 抓取自控制台）
+    return json(200, {
+      plan: { id: 'free', name: 'Free Plan', type: 'TOKEN_PLAN_PLAN_TYPE_FREE' },
+      pools: [
+        {
+          id: 'pool_general',
+          name: '通用积分池',
+          pool_type: 'default',
+          window_5h: { limit: '60000', used: '248.06624', remaining: '59751.93376', reset_at: '1789927830' },
+          window_7d: { limit: '600000', used: '667.49712', remaining: '599332.50288', reset_at: '1790158230' }
+        },
+        {
+          id: 'pool_flashlite',
+          name: 'Flash-Lite积分池',
+          pool_type: 'dedicated',
+          window_5h: { limit: '60000', used: '0', remaining: '60000', reset_at: '1789927830' },
+          window_7d: { limit: '600000', used: '0', remaining: '600000', reset_at: '1790158230' }
+        }
+      ]
+    })
   }
     if (u.includes('mock.local/newapi/api/user/self')) {
     return json(200, { success: true, message: '', data: { id: 1, username: 'alice', quota: 1600000, used_quota: 2400000, request_count: 87 } })
@@ -403,6 +478,29 @@ ok(errorText('COOKIE_EXPIRED') === '登录已过期，点「登录」重新获�
 }
 await expectCode(PROVIDERS['mimo-plan'], { type: 'mimo-plan' }, 'COOKIE_EXPIRED', 'mimo-plan Cookie 过期 → COOKIE_EXPIRED', { getSecret: () => 'cookie=expired' })
 await expectCode(PROVIDERS['mimo-plan'], { type: 'mimo-plan' }, 'BAD_PATH', 'mimo-plan 未开通套餐 → BAD_PATH', { getSecret: () => 'cookie=noplan' })
+
+// ---------- 10g. sensenova（商汤日日新 Token Plan：5 小时窗口 + 周额度 + 专属池） ----------
+{
+  const r = await PROVIDERS.sensenova({ type: 'sensenova' }, { getSecret: () => 'jwt.token.value' })
+  close(r.remaining, 59751.93376, 'sensenova 主数值=通用池 5h 剩余 59751.93376')
+  close(r.total, 60000, 'sensenova 进度条分母=5h 上限 60000')
+  close(r.used, 248.06624, 'sensenova 5h 已用 248.06624')
+  ok(r.unit === '积分', 'sensenova unit=积分')
+  ok(r.note.includes('Free Plan') && r.note.includes('重置'), 'sensenova note 含套餐名+重置时间', r.note)
+  ok(r.items.length === 3, 'sensenova 三行：5 小时窗口 + 周额度 + Flash-Lite 专属池', '实际 ' + r.items.length)
+  ok(r.items[0].planName.includes('5 小时窗口'), 'sensenova 第一行=5 小时窗口', r.items[0].planName)
+  close(r.items[1].remaining, 599332.50288, 'sensenova 周额度剩余 599332.50288')
+  close(r.items[1].total, 600000, 'sensenova 周额度上限 600000')
+  ok(r.items[2].planName.includes('Flash-Lite'), 'sensenova 专属池单独列出', r.items[2].planName)
+  close(r.items[2].remaining, 60000, 'sensenova 专属池剩余 60000')
+  ok(/重置时间/.test(r.items[0].note || ''), 'sensenova 5 小时行带重置时间', r.items[0].note)
+}
+SN_MODE = 'expired'
+await expectCode(PROVIDERS.sensenova, { type: 'sensenova' }, 'COOKIE_EXPIRED', 'sensenova 登录态过期 → COOKIE_EXPIRED（提示重新登录）', { getSecret: () => 'jwt.token.value' })
+SN_MODE = 'nopool'
+await expectCode(PROVIDERS.sensenova, { type: 'sensenova' }, 'BAD_PATH', 'sensenova 无积分池 → BAD_PATH', { getSecret: () => 'jwt.token.value' })
+SN_MODE = 'ok'
+await expectCode(PROVIDERS.sensenova, { type: 'sensenova' }, 'MISSING_FIELD', 'sensenova 没登录态 → MISSING_FIELD', { getSecret: () => '' })
 
 // ---------- 10f. minimax（Cookie + X-Group-Id） ----------
 {

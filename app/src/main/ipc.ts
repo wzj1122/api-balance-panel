@@ -1,5 +1,5 @@
 import { app, ipcMain, Notification, shell } from 'electron'
-import { MIMO_BALANCE_URL } from '../shared/constants'
+import { MIMO_BALANCE_URL, SENSENOVA_TOKEN_KEY } from '../shared/constants'
 import { IPC } from '../shared/ipc'
 import type { RefreshPayload } from '../shared/ipc'
 import type { AccountInput, AppInfo, MonitorInput, ReportPeriod, Settings, LogLevel, KeyVaultInput } from '../shared/types'
@@ -7,7 +7,7 @@ import { applyAutoStart, getAutoStartStatus } from './autostart'
 import { backgroundData, backgroundForTheme, importBackground, listBackgrounds, removeBackground } from './bgstore'
 import { exportBackup, importBackup } from './backup'
 import { buildMonitorReport, listChecks, removeMonitor, removeMonitorsBySecret, runMonitors, saveMonitor, testMonitor } from './monitor'
-import { cookieHas, loginToSite, validateByUrl, validateMinimaxCookie, type LoginOptions } from './browser'
+import { cookieHas, loginToSite, validateByUrl, validateMinimaxCookie, validateSenseNovaToken, type LoginOptions } from './browser'
 import { isSecure } from './crypto'
 import { removeVaultKey, revealVaultKey, saveVaultKey } from './keyvault'
 import { buildKeyList } from './keys'
@@ -154,6 +154,9 @@ export function registerIpc(): void {
           success?: LoginOptions['success']
           extra?: string[]
           validate?: (c: string) => Promise<string | null>
+          /** 登录态存放在 localStorage 里的平台（商汤日日新）：抓 token 而不是 Cookie */
+          tokenKey?: string
+          validateToken?: (t: string) => Promise<string | null>
         }
       >
     > = {
@@ -180,6 +183,12 @@ export function registerIpc(): void {
       zhipu: {
         success: { hosts: ['bigmodel.cn'], pathPrefix: '/console/' },
         validate: cookieHas('bigmodel_token_production')
+      },
+      sensenova: {
+        // 商汤日日新的额度接口只认登录态（Bearer token，存在 localStorage.access_token），
+        // Cookie 抓了也没用（实测 401），所以这里走 tokenKey 分支。
+        tokenKey: SENSENOVA_TOKEN_KEY,
+        validateToken: validateSenseNovaToken
       }
     }
     const rule = p.platform ? rules[p.platform] : undefined
@@ -194,7 +203,9 @@ export function registerIpc(): void {
       name: typeof p.name === 'string' && p.name ? p.name : '站点',
       extraUrls,
       success: rule?.success,
-      validate: rule?.validate
+      validate: rule?.validate,
+      tokenKey: rule?.tokenKey,
+      validateToken: rule?.validateToken
     })
   })
 

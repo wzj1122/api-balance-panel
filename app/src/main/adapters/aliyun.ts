@@ -2,6 +2,7 @@ import { createHmac, randomUUID } from 'node:crypto'
 import type { Account, BalanceItem } from '../../shared/types'
 import { AdapterError, mapHttpStatus } from '../errors'
 import { request } from '../http'
+import { getLogLevel, logger } from '../logger'
 import type { Adapter } from './types'
 import { okResult, round6 } from './util'
 
@@ -193,27 +194,54 @@ export const aliyunAdapter: Adapter = async (account: Account, ctx) => {
     }
   ]
 
-  // ---- 代金券（失败不致命） ----
+  // ---- 代金券（失败不致命，但失败原因必须说出来，否则用户只会看到"券突然没了"） ----
   let couponRemain = 0
   let couponNominal = 0
   let couponUsed = 0
   let couponUsable = 0
+  /** 券查询的诊断信息：空 = 一切正常；非空 = 卡片备注里显示，方便定位"读不到券" */
+  let couponWarn = ''
   try {
     const cupJson = await bssCall(buildBssUrl(ak.id, ak.secret, 'QueryCashCoupons'))
     const list = (cupJson.Data ?? cupJson.data ?? {}) as Record<string, unknown>
     const arr = fld(list, 'cashCoupon')
-    for (const cRaw of Array.isArray(arr) ? (arr as unknown[]) : []) {
-      const c = cRaw as Record<string, unknown>
-      if (String(fld(c, 'status') ?? '') !== 'Available') continue
+    const coupons = Array.isArray(arr) ? (arr as Record<string, unknown>[]) : []
+    const seen: string[] = []
+    for (const c of coupons) {
+      const status = String(fld(c, 'status') ?? '')
       const nominal = n(fld(c, 'nominalValue')) ?? 0
       const remain = n(fld(c, 'balance')) ?? nominal
+      if (getLogLevel() === 'debug') {
+        // debug 级别下把每张券的关键字段记进日志（券号这类敏感字段只记前 6 位）
+        seen.push(
+          `{status=${status} nominal=${nominal} balance=${remain} ` +
+            `expiry=${String(fld(c, 'expiryTime') ?? '')} id=${String(fld(c, 'cashCouponId') ?? '').slice(0, 6)}…}`
+        )
+      }
+      // 兼容状态大小写/中英文差异：只排除明确不可用的状态，避免平台改字面量后整批券被丢掉
+      const statusLower = status.toLowerCase()
+      const unusable = statusLower !== '' && /expired|used|freeze|frozen|作废|已用|过期|冻结/.test(statusLower)
+      if (unusable) continue
       couponRemain += remain
       couponNominal += nominal
       couponUsed += nominal - remain
       couponUsable++
     }
-  } catch {
-    /* 忽略：券接口异常不影响资金账户展示 */
+    if (couponUsable === 0 && coupons.length > 0) {
+      // 有券但一张都没算进来：把状态值带出来，便于判断是状态字面量变了还是券真的过期了
+      const statuses = Array.from(new Set(coupons.map((c) => String(fld(c, 'status') ?? '空')))).slice(0, 6)
+      couponWarn = '；代金券接口返回 ' + coupons.length + ' 张但无可用券（状态：' + statuses.join('/') + '）'
+      logger.warn('[aliyun] QueryCashCoupons 返回 ' + coupons.length + ' 张券，状态：' + statuses.join('、'))
+    }
+    logger.info(
+      `[aliyun] 代金券：接口返回 ${coupons.length} 张，可用 ${couponUsable} 张，剩余合计 ${round6(couponRemain)}`
+    )
+    if (seen.length > 0) logger.debug('[aliyun] 代金券明细：' + seen.join(' '))
+  } catch (e) {
+    // 以前这里静默忽略，用户只能看到"券突然读不到"；现在把原因写进日志与卡片备注
+    const msg = e instanceof AdapterError ? e.detail || e.code : (e as Error).message
+    couponWarn = '；代金券读取失败：' + msg
+    logger.warn('[aliyun] QueryCashCoupons 失败：' + msg)
   }
 
   // ---- 节省计划（失败不致命） ----
@@ -271,7 +299,8 @@ export const aliyunAdapter: Adapter = async (account: Account, ctx) => {
     total,
     used,
     unit: currency,
-    note: couponUsable > 0 ? '来源：阿里云 BSS OpenAPI（含代金券）' : '来源：阿里云 BSS OpenAPI',
+    note:
+      (couponUsable > 0 ? '来源：阿里云 BSS OpenAPI（含代金券）' : '来源：阿里云 BSS OpenAPI') + couponWarn,
     items
   })
 }

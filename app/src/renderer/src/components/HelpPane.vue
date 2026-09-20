@@ -38,6 +38,7 @@ const docHtml = `<h1>API 余额面板 · 使用说明</h1>
 <p>| Forbidden / NoPermission / AccessDenied | 密钥没有费用查询权限 | 回到第 2 步，给该用户授权 AliyunBSSReadOnlyAccess |</p>
 <p>| 网络不通 | 机器解析不了阿里云接口域名 | 检查网络/代理/DNS，稍后重试 |</p>
 <p><strong>关于「API Key」</strong>：百炼控制台里「API-KEY 管理」的 <code>sk-</code> 开头密钥是<strong>调用模型</strong>用的令牌， 阿里云没有给它开放余额查询接口，所以<strong>不能用它查余额</strong>；查余额只能用上面这种 RAM AccessKey。</p>
+<p><strong>代金券读不到时怎么看</strong>：卡片下方小字会直接写明原因（「代金券读取失败：…」或「接口返回 N 张但无可用券（状态：…）」）；「运行日志」页搜 <code>aliyun</code> 能看到返回张数/可用张数/剩余合计，日志级别切到 debug 还能看到每张券的状态、面值、余额与到期时间。常见原因：RAM 用户没有 <code>AliyunBSSReadOnlyAccess</code> 权限、券已过期或用完、券尚未到生效时间、券属于另一个阿里云账号。</p>
 <hr/>
 <h2>三、日常使用</h2>
 <ul><li><strong>自动刷新</strong>：默认每 60 秒刷新一次（可在设置里调整 15 秒~24 小时）。程序最小化到托盘时继续刷新。</li><li><strong>低余额提醒</strong>：每个账号可单独设置「剩余低于 X 时提醒」；触发后卡片余额变黄/显示「低余额」标记，并弹系统通知。</li><li><strong>单账号刷新</strong>：点卡片右上角箭头图标；失败卡片上有点击重试按钮。</li><li><strong>趋势图</strong>：点卡片右上角趋势按钮可看余额走势（保存在本机）。</li></ul>
@@ -48,6 +49,8 @@ const docHtml = `<h1>API 余额面板 · 使用说明</h1>
 <ul><li>所有密钥 / Cookie 只保存在本机，使用系统级加密（Windows DPAPI）落盘，不会上传、不会进入任何日志。</li><li>程序只在每次刷新时请求各平台官方余额接口，无其他外联。</li><li>建议给阿里云等平台单独创建「只读」专用密钥，见上文授权步骤。</li></ul>
 <h3>3b) 小米 MiMo 套餐（Token Plan）</h3>
 <ul><li>「小米 MiMo」管<strong>余额</strong>（现金/赠送），「小米 MiMo 套餐」管<strong>套餐用量</strong>（用量/总额度/套餐名/有效期），两者<strong>共用同一个登录状态</strong>。</li><li>选「小米 MiMo 套餐」→ 点「登录 MiMo 获取 Cookie」会直接跳到小米账号登录页，登录完成窗口自动关闭；若你已添加过「小米 MiMo」，添加时勾选「同时添加另一个方式」可以一键把套餐卡片也加上。</li><li>卡片显示：套餐名（如 Lite）、已用 / 总额度（M Credits）、剩余量、有效期至 X 月 X 日。</li></ul>
+<h3>3c) 商汤 日日新（SenseNova · Token Plan 双积分池）</h3>
+<ul><li>在 <a href="https://platform.sensenova.cn/console" target="_blank" rel="noopener">SenseNova 控制台</a>登录一次即可；面板里选「商汤 日日新（SenseNova）」→ 点「登录并获取」，窗口会自动检测并关闭。</li><li>额度口径（与官方「账户总览」一致）：<strong>5 小时窗口</strong>（窗口到期自动重置，卡主数值/进度条取它）＋ <strong>周额度</strong>（7 天总量）＋ <strong>Flash-Lite 积分池</strong>（Flash-Lite 模型专属池，单独计量）。</li><li>注意：额度接口只认<strong>登录态</strong>（不认 API Key），登录态约 3 小时过期，过期后卡片提示重新登录；「公测 FREE」套餐各模型单独计量积分。</li></ul>
 <hr/>
 <h3>7) MiniMax（余额 = 现金 + 代金券 + 授信 − 欠费）</h3>
 <ol><li>打开 <a href="https://platform.minimaxi.com/" target="_blank" rel="noopener">MiniMax 开放平台</a> 或 <a href="https://platform.minimax.cn/" target="_blank" rel="noopener">国内站</a> 登录（面板会自动识别 .com / .cn 站点）。</li><li>面板里选「MiniMax」，点「登录 MiniMax」会直接打开统一登录页，登录完成窗口自动关闭并抓取余额（现金 + 代金券 + 授信 − 欠费）。</li><li>卡片显示「可用额度」，下面分行列出：现金、代金券、授信、欠费（为 0 的项自动隐藏）。</li><li>说明：MiniMax 的「余额」不是 API Key 的预充值，而是<strong>账户钱包</strong>（可充值 + 代金券），欠费会从可用额度里扣除。</li></ol>

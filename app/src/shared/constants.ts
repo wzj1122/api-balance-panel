@@ -150,11 +150,23 @@ export const PROVIDER_META: Record<AccountType, ProviderMeta> = {
     defaultUnit: 'CNY',
     defaultThreshold: DEFAULT_SETTINGS.default_threshold,
     secretHint: '在阿里云 RAM 控制台创建只读 AccessKey（授权 AliyunBSSReadOnlyAccess），格式：AccessKey ID|AccessKey Secret，例如 LTAIabc123|你的秘密。只存本机加密。'
+  },
+  sensenova: {
+    type: 'sensenova',
+    label: '商汤 日日新（SenseNova）',
+    needSecret: true,
+    needBaseUrl: false,
+    needUserId: false,
+    needRequest: false,
+    needLogin: true,
+    defaultUnit: '积分',
+    defaultThreshold: 6000,
+    secretHint: '点击「登录」在商汤开放平台登录一次，自动获取登录态（额度接口只认登录态，不认 API Key）；登录态约 3 小时过期，过期后重新登录即可。'
   }
 }
 
 /** 账号类型顺序（界面下拉与 PROVIDERS 注册表共用） */
-export const ACCOUNT_TYPES: AccountType[] = ['deepseek', 'siliconflow', 'newapi', 'custom', 'mimo', 'mimo-plan', 'minimax', 'zhipu', 'aliyun']
+export const ACCOUNT_TYPES: AccountType[] = ['deepseek', 'siliconflow', 'newapi', 'custom', 'mimo', 'mimo-plan', 'minimax', 'zhipu', 'aliyun', 'sensenova']
 
 /** DeepSeek 官方余额接口地址（固定，用户不可配） */
 export const DEEPSEEK_BALANCE_URL = 'https://api.deepseek.com/user/balance'
@@ -182,10 +194,22 @@ export const ZHIPU_LOGIN_URL = 'https://bigmodel.cn/login?redirect=%2Fconsole%2F
 /** 智谱 账户信息接口（余额） */
 export const ZHIPU_ACCOUNT_URL = 'https://bigmodel.cn/api/biz/customer/accountSet'
 
+// ---------------- 商汤 日日新（SenseNova） ----------------
+
+/**
+ * 控制台地址。未登录时会自动跳到商汤账号登录页，登录完成后回到控制台。
+ * 额度数据只认 localStorage 里的 OAuth access_token（Bearer 方式），Cookie 无效（实测返回 401）。
+ */
+export const SENSENOVA_CONSOLE_URL = 'https://platform.sensenova.cn/console'
+/** Token Plan 双积分池额度：pools[].window_5h / window_7d（5 小时窗口 + 周额度） */
+export const SENSENOVA_POOL_USAGE_URL = 'https://platform.sensenova.cn/lite/console/v1/tokenplan/pool-usage'
+/** 登录态在 localStorage 里的键名 */
+export const SENSENOVA_TOKEN_KEY = 'access_token'
+
 /**
  * 凭据类型鉴别：
  * - apiKey：用 API Key / 令牌访问（DeepSeek、New API 中转站、自定义）→ 属于「Key 管理」的范畴
- * - cookie：登录 Cookie 型（MiMo / MiniMax / 智谱 / 硅基流动）
+ * - cookie：登录 Cookie / 登录态型（MiMo / MiniMax / 智谱 / 硅基流动 / 商汤日日新）
  * - accessKey：云厂商 AK/SK（阿里云百炼）
  */
 export type CredentialKind = 'apiKey' | 'cookie' | 'accessKey'
