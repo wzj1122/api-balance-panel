@@ -84,6 +84,96 @@ async function collectToken(win: BrowserWindow, key: string): Promise<string> {
 }
 
 /**
+ * 安装「登录态探针」（文档创建前注入，随每次导航自动重装）。
+ *
+ * 解决两个现实问题：
+ * 1. 有些平台登录后**不一定把 token 写进 localStorage**（或换了键名），
+ *    但页面自己肯定会带着 `Authorization: Bearer <token>` 去请求接口 —— 顺手记下来；
+ * 2. 页面切换/重定向瞬间 executeJavaScript 可能读不到，这时用记下来的值兜底。
+ *
+ * 只读取请求头，不改动页面行为；值不会写进日志。
+ */
+const TOKEN_PROBE_SOURCE = [
+  '(() => {',
+  '  try {',
+  '    if (window.__dshProbeInstalled) return;',
+  '    window.__dshProbeInstalled = true;',
+  '    window.__dshAuthToken = window.__dshAuthToken || "";',
+  '    var HDRS = ["authorization", "Authorization"];',
+  '    var pick = function (h) {',
+  '      try {',
+  '        if (!h) return "";',
+  '        var i, k, raw = "";',
+  '        for (i = 0; i < HDRS.length && !raw; i++) {',
+  '          k = HDRS[i];',
+  '          raw = typeof h.get === "function" ? (h.get(k) || "") : (h[k] || "");',
+  '        }',
+  '        if (!raw) return "";',
+  '        return String(raw).split(" ").slice(-1)[0];', // 去掉 "Bearer " 前缀
+  '      } catch (e) { return ""; }',
+  '    };',
+  '    var save = function (t) { if (t && t.length > 20) window.__dshAuthToken = t; };',
+  '    var of = window.fetch;',
+  '    if (of) {',
+  '      window.fetch = function () {',
+  '        try { save(pick((arguments[1] || {}).headers)); } catch (e) {}',
+  '        return of.apply(this, arguments);',
+  '      };',
+  '    }',
+  '    var oo = XMLHttpRequest.prototype.setRequestHeader;',
+  '    if (oo) {',
+  '      XMLHttpRequest.prototype.setRequestHeader = function (name, value) {',
+  '        try {',
+  '          if (String(name).toLowerCase() === "authorization") save(String(value).split(" ").slice(-1)[0]);',
+  '        } catch (e) {}',
+  '        return oo.call(this, name, value);',
+  '      };',
+  '    }',
+  '  } catch (e) {}',
+  '})()'
+].join('\n')
+
+// 自检：上面的源码在实现里必须没有残留转义错误（多行模板里写正则很容易翻车，这里用断言锁死）
+if (TOKEN_PROBE_SOURCE.includes('\\\\')) {
+  throw new Error('TOKEN_PROBE_SOURCE 含有双重转义，注入后会失效')
+}
+
+/** 读探针记下来的登录态（拿不到返回空串） */
+async function readProbedToken(win: BrowserWindow): Promise<string> {
+  try {
+    const v = await win.webContents.executeJavaScript(
+      `(() => { try { return window.__dshAuthToken || '' } catch (e) { return '' } })()`,
+      true
+    )
+    return typeof v === 'string' ? v : ''
+  } catch {
+    return ''
+  }
+}
+
+/** 列出页面上像是登录态的键名（只读键名与长度，不含值，便于排查"键名变了"） */
+async function describeTokenKeys(win: BrowserWindow): Promise<string> {
+  try {
+    const v = await win.webContents.executeJavaScript(
+      `(() => {
+        try {
+          const out = []
+          for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i) || ''
+            if (/token|auth|jwt|session/i.test(k)) out.push(k + '(' + String(localStorage.getItem(k) || '').length + ')')
+          }
+          return out.join(', ') || '（没有像登录态的键）'
+        } catch (e) { return 'ERR:' + e.message }
+      })()`,
+      true
+    )
+    return typeof v === 'string' ? v : ''
+  } catch {
+    return '（页面已关闭，读不到）'
+  }
+}
+
+/**
  * 打开登录窗口（直达登录表单页）。
  * 登录成功（URL 回到控制台 + 校验通过）时自动关闭窗口并返回凭据；
  * 凭据有二选一：Cookie（默认）或 localStorage 里的 token（tokenKey，商汤等平台）。
@@ -118,13 +208,55 @@ export function loginToSite(opts: LoginOptions): Promise<LoginResult> {
     /** 本次要抓的凭据类型：配了 tokenKey 就抓 token，否则抓 Cookie */
     const wantToken = typeof opts.tokenKey === 'string' && opts.tokenKey.length > 0
 
+    // 文档创建前注入探针：每次导航/重定向后都会自动重装（只读 Authorization 头）
+    if (wantToken) {
+      const injectProbe = (): void => {
+        void win.webContents.executeJavaScript(TOKEN_PROBE_SOURCE, true).catch(() => {})
+      }
+      win.webContents.on('did-start-navigation', injectProbe)
+      win.webContents.on('did-finish-load', injectProbe)
+      // 注入到"每次新文档创建前"，保证页面自己的首屏请求也能被记到
+      try {
+        win.webContents.on('did-start-loading', injectProbe)
+      } catch { /* 忽略 */ }
+    }
+
+    /**
+     * 主动重载控制器（login-window → 控制台 场景的关键兜底）。
+     *
+     * 实测（2026-09-20）：商汤的会话是 HttpOnly Cookie，`access_token` 只是页面启动时
+     * 用会话换取并写进 localStorage 的缓存。如果用户在这条链路的某一跳之后才完成登录，
+     * 页面可能不会主动再写一次 token。这时主动 reload 一次控制台，平台就会拿会话 Cookie
+     * 换取并写回 token（不会让用户重新登录，也不会顶掉浏览器里的登录态）。
+     */
+    let reloads = 0
+    const CONSENT_RELOAD_LIMIT = 2
+
+    /** 最近一次"看到了登录态但校验没过"的原因（关窗时用来给出准确提示） */
+    let lastValidationError = ''
+
     /** 取当前凭据（token 或 Cookie），并做即时校验；返回 null = 通过 */
     const grabCredential = async (): Promise<{ value: string; error: string | null }> => {
       if (wantToken) {
-        const token = await collectToken(win, opts.tokenKey as string)
-        if (!token) return { value: '', error: '还在等待登录…（还没读到登录态）' }
+        const key = opts.tokenKey as string
+        let token = await collectToken(win, key)
+        let from = 'localStorage.' + key
+        if (!token) {
+          // 兜底：页面自己请求接口时带的 Authorization 头
+          token = await readProbedToken(win)
+          from = '网络请求头(Authorization)'
+        }
+        if (!token) {
+          const keys = await describeTokenKeys(win)
+          return { value: '', error: '还在等待登录…（没读到登录态；页面上的候选键：' + keys + '）' }
+        }
         const err = opts.validateToken ? await opts.validateToken(token) : null
-        return { value: token, error: err }
+        if (err) {
+          lastValidationError = err
+          return { value: token, error: err }
+        }
+        logger.info(`[browser] ${opts.name} 已读到登录态（来源 ${from}，长度 ${token.length}）并通过接口校验`)
+        return { value: token, error: null }
       }
       const cookie = await collectCookies(ses, urls)
       if (!cookie) return { value: '', error: '还没抓到登录 Cookie' }
@@ -135,6 +267,11 @@ export function loginToSite(opts: LoginOptions): Promise<LoginResult> {
     let settled = false
     let autoClosing = false
     let matchedAt = 0
+    /** 已经校验通过的凭据（先落定再关窗，避免关窗途中的竞态） */
+    let pendingCredential = ''
+    /** 轮询里最近一次的状态（写进日志，便于排查"卡在哪一步"） */
+    let lastNote = ''
+    let lastNoteAt = 0
     const startedAt = Date.now()
 
     const closeWin = () => {
@@ -160,9 +297,27 @@ export function loginToSite(opts: LoginOptions): Promise<LoginResult> {
           const { value, error } = await grabCredential()
           if (value && error === null) {
             try { win.setTitle('登录 ' + opts.name + '（校验通过，即将自动关闭）') } catch { /* 忽略 */ }
-            await sleep(600) // 留一点时间给最后一批凭据落盘
+            // 先落定结果再关窗：避免"正在关窗时用户手动点了 ×"导致凭据读不到
+            settled = true
+            pendingCredential = value
+            await sleep(400) // 留一点时间给最后一批凭据落盘
             closeWin()
             return
+          }
+          // 每 5 秒把"当前在哪一步"记一次日志，方便用户/开发者定位卡点（不含凭据内容）
+          const now = Date.now()
+          if (error && now - lastNoteAt > 5000) {
+            lastNoteAt = now
+            lastNote = error
+            let u = ''
+            try { u = win.webContents.getURL() } catch { /* 忽略 */ }
+            logger.info(`[browser] ${opts.name} 等待登录中…（当前页面：${u || '未知'}；${error}）`)
+            // 已经处在控制台（说明登录已完成）却读不到登录态 → 主动重载一次，让平台把 token 写回 localStorage
+            if (wantToken && reloads < CONSENT_RELOAD_LIMIT && u.includes(new URL(opts.url).hostname + '/console')) {
+              reloads++
+              logger.info(`[browser] ${opts.name} 已在控制台但读不到登录态，主动重载一次以取回登录态（第 ${reloads} 次）`)
+              try { void win.loadURL(opts.url) } catch { /* 忽略 */ }
+            }
           }
         } catch (e) {
           logger.warn('[browser] 自动校验失败：' + (e as Error).message)
@@ -170,7 +325,8 @@ export function loginToSite(opts: LoginOptions): Promise<LoginResult> {
         if (Date.now() - matchedAt > 60000) {
           let lastUrl = ''
           try { lastUrl = win.webContents.getURL() } catch { /* 忽略 */ }
-          logger.warn('[browser] ' + opts.name + ' 自动检测超时（最后停在：' + lastUrl + '）')
+          logger.warn(`[browser] ${opts.name} 自动检测超时（最后停在：${lastUrl}；${lastNote || '未读到登录态'}）`)
+          try { win.setTitle('登录 ' + opts.name + '（还没检测到登录成功：请在窗口里完成登录，进入控制台后会自动关闭）') } catch { /* 忽略 */ }
           break
         }
         await sleep(900)
@@ -182,21 +338,30 @@ export function loginToSite(opts: LoginOptions): Promise<LoginResult> {
 
     win.on('closed', () => {
       clearInterval(timer)
-      if (settled) return
+      if (settled && !pendingCredential) return
+      const alreadyValidated = pendingCredential
       settled = true
       void (async () => {
         try {
           if (wantToken) {
-            const token = await collectToken(win, opts.tokenKey as string)
+            let token = alreadyValidated
+            // 关窗后再兜底读一次（页面刚销毁时可能读不到，读不到就用轮询阶段拿到的）
+            if (!token) token = await collectToken(win, opts.tokenKey as string)
+            if (!token) token = await readProbedToken(win)
             if (!token) {
-              resolve({ ok: false, error: '没有读到登录态，请确认已经登录成功后再关闭窗口' })
+              const keys = await describeTokenKeys(win)
+              logger.warn('[browser] ' + opts.name + ' 关窗时没读到登录态；页面候选键：' + keys)
+              resolve({
+                ok: false,
+                error: '没有读到登录态（' + keys + '）。请确认在弹出的窗口里已经登录进控制台（看到账户总览页）后再关闭窗口'
+              })
               return
             }
             if (opts.validateToken) {
               const err = await opts.validateToken(token)
               if (err) {
                 logger.warn('[browser] ' + opts.name + ' 登录态校验未通过：' + err)
-                resolve({ ok: false, error: err })
+                resolve({ ok: false, error: err + (lastValidationError && lastValidationError !== err ? '（最近一次：' + lastValidationError + '）' : '') })
                 return
               }
             }
@@ -225,12 +390,16 @@ export function loginToSite(opts: LoginOptions): Promise<LoginResult> {
       })()
     })
 
-    // 清掉这个登录分区里的历史 Cookie（先清空再加载页面，顺序很重要），
+    // 清掉这个登录分区里的历史凭据（先清空再加载页面，顺序很重要），
     // 这样校验只针对「本次登录」，不会因为旧会话残留而一开窗就误判通过。
+    // 注意：必须连 localStorage 一起清 —— 商汤这类平台把 access_token 存在 localStorage，
+    // 只清 Cookie 会留下上一次的过期 token，导致"校验用旧 token 通过了、刷新时又过期"的鬼打墙。
+    let windowAlive = true
+    win.on('closed', () => { windowAlive = false })
     void ses
-      .clearStorageData({ storages: ['cookies'] })
-      .then(() => logger.info('[browser] 已清空登录窗口的历史 Cookie（避免旧会话干扰）'))
-      .catch((e: unknown) => logger.warn('[browser] 清空历史 Cookie 失败：' + (e as Error).message))
+      .clearStorageData({ storages: ['cookies', 'localstorage'] })
+      .then(() => logger.info('[browser] 已清空登录窗口的历史凭据（Cookie + localStorage，避免旧会话干扰）'))
+      .catch((e: unknown) => logger.warn('[browser] 清空历史凭据失败：' + (e as Error).message))
       .finally(() => {
         try {
           void win.loadURL(opts.url)
