@@ -393,6 +393,12 @@ select.input option {
   color: var(--err);
 }
 
+.banner.ok {
+  background: var(--ok-soft);
+  border: 1px solid var(--line-strong);
+  color: var(--tx);
+}
+
 /* ---------- 滚动条（细窄圆条） ---------- */
 ::-webkit-scrollbar {
   width: 10px;

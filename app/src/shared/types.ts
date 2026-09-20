@@ -52,7 +52,6 @@ export interface CustomRequest {
   headers?: Record<string, string>
   body?: string
 }
-
 /** 自定义平台的"子项数组"提取配置 */
 export interface CustomExtractItem {
   /** 数组所在路径，如 data.plans */
@@ -77,6 +76,28 @@ export interface CustomExtract {
   items?: CustomExtractItem[]
 }
 
+/**
+ * 会话凭据（登录型平台的「续期材料」）。
+ *
+ * 为什么需要它：商汤 / 小米这类平台的登录态是「会话 Cookie + 短期 token」结构，
+ * token 只活几小时，但只要有会话 Cookie 就能静默换新的。把会话一起存下来，
+ * 就能在 token 过期时自动续期，用户不用反复重新登录。
+ *
+ * 明文只在主进程内存里，落盘时同样走 safeStorage 加密（account.session_enc）。
+ */
+export interface CredentialSession {
+  /** 抓取时间 */
+  ts: number
+  /** 会话 Cookie（name=value; name2=value2） */
+  cookies: string
+  /** localStorage 里的登录态键名，供续期窗口比对 */
+  tokenKey: string
+  /** 上次抓取时登录态的长度（只用于判断"有没有变化"，不用于还原） */
+  tokenLen: number
+  /** 格式版本，便于以后调整结构 */
+  v: number
+}
+
 /** 一个被监控的账号（磁盘上的形态） */
 export interface Account {
   id: string
@@ -90,6 +111,10 @@ export interface Account {
   secret_enc: string | null
   /** 界面展示用，如 sk-****1234 */
   secret_masked: string
+  /** 续期材料密文（base64）：会话 Cookie 等；登录型平台才有 */
+  session_enc?: string | null
+  /** 当前凭据的过期时间（毫秒时间戳；null = 未知），用于到期前自动续期 */
+  token_expires_at?: number | null
   /** newapi 必填；siliconflow 可选（默认 https://api.siliconflow.cn） */
   base_url?: string
   /** newapi 可选，New-API-User */

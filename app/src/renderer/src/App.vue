@@ -18,7 +18,7 @@ import HelpPane from '@renderer/components/HelpPane.vue'
 import UsageReportView from '@renderer/components/UsageReportView.vue'
 import BudgetBar from '@renderer/components/BudgetBar.vue'
 import OnboardingGuide from '@renderer/components/OnboardingGuide.vue'
-import { backgroundData, backgroundForTheme, listDailyUsage, setDemoMode } from '@renderer/api/ipc'
+import { backgroundData, backgroundForTheme, listDailyUsage, renewAccount, setDemoMode } from '@renderer/api/ipc'
 import { resolveTheme } from '@renderer/utils/theme'
 
 const {
@@ -50,6 +50,47 @@ const budgetRows = ref<{ unit: string; today: number | null; remaining: number |
 const demoOn = ref(false)
 /** 新手引导是否显示 */
 const showOnboard = ref(false)
+/** 正在静默续期的账号 id 集合（卡片按钮态） */
+const renewingIds = ref<Set<string>>(new Set())
+/** 续期结果提示（顶部小字，几秒后自动消失） */
+const renewMsg = ref('')
+
+/**
+ * 静默续期登录：用已保存的会话自动换新凭据（不弹窗、不需要密码）。
+ * 成功后立刻刷一次该账号；失败说明会话真的失效了，提示去重新登录。
+ */
+async function onRenew(id: string): Promise<void> {
+  const acc = accounts.value.find((a) => a.id === id)
+  const next = new Set(renewingIds.value)
+  next.add(id)
+  renewingIds.value = next
+  renewMsg.value = ''
+  try {
+    const r = await renewAccount(id)
+    if (!r.ok) {
+      renewMsg.value = '续期失败：' + r.error
+      return
+    }
+    if (r.data.ok) {
+      renewMsg.value =
+        (acc?.name ?? '账号') +
+        ' 续期成功' +
+        (r.data.expiresAt ? '，新凭据有效至 ' + new Date(r.data.expiresAt).toLocaleString('zh-CN') : '')
+      await refreshOne(id)
+    } else if (r.data.needLogin) {
+      // 会话真的失效了：直接把编辑窗打开，用户只要点一下「登录并获取」即可（不用再找入口）
+      renewMsg.value = '会话已失效，已打开登录窗口——点「登录并获取」重新登录一次即可'
+      openEdit(id)
+    } else {
+      renewMsg.value = '续期失败：' + (r.data.error || '未知原因')
+    }
+  } finally {
+    const done = new Set(renewingIds.value)
+    done.delete(id)
+    renewingIds.value = done
+    setTimeout(() => { renewMsg.value = '' }, 6000)
+  }
+}
 
 // 主题：设置驱动（深色 / 浅色 / 跟随系统 / 设计师主题），写入 data-theme
 // - 深色 / 浅色 = 直接切到对应的经典主题（与「主题外观」页里的「深色（默认）」「浅色（默认）」是同一套）
@@ -304,6 +345,7 @@ async function onSettingsSave(patch: Parameters<typeof saveSettings>[0]) {
     <div class="main">
 
       <div class="content">
+        <div v-if="renewMsg" class="banner ok banner-top">{{ renewMsg }}</div>
         <template v-if="view === 'dashboard'">
           <div v-if="configBanner" class="banner warn banner-top">{{ configBanner }}</div>
 
@@ -335,8 +377,10 @@ async function onSettingsSave(patch: Parameters<typeof saveSettings>[0]) {
                       :key="row.accountId"
                       :row="row"
                       :refreshing="refreshingIds.has(row.accountId)"
+                      :renewing="renewingIds.has(row.accountId)"
                       :forecast="forecastMap?.get(row.accountId) ?? null"
                       @refresh="refreshOne"
+                      @renew="onRenew"
                       @edit="openEdit"
                       @remove="onRemove"
                     />

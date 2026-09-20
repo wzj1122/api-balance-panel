@@ -48,6 +48,8 @@ export const IPC = {
   APP_OPEN_DATA_DIR: 'app:openDataDir',
   /** invoke：打开内置浏览器登录某站点，返回抓到的 Cookie 字符串 */
   ACCOUNT_LOGIN: 'account:login',
+  /** invoke：静默续期登录（用保存的会话换新凭据，不弹窗、不需要密码） */
+  ACCOUNT_RENEW: 'account:renew',
   /** invoke：取实时汇率（成本折算用，只发货币代码，不带账号信息） */
   FX_GET: 'fx:get',
   /** invoke：取某账号的余额快照（趋势图用） */
@@ -146,7 +148,12 @@ export interface PanelApi {
     platform?: string
     /** 额外按这些 URL 一起抓 Cookie（接口域与登录域不同的平台，如 MiniMax 的 www.minimaxi.com） */
     extraUrls?: string[]
-  }): Promise<{ ok: boolean; cookie?: string; error?: string }>
+    /** 编辑已有账号时传账号 id：登录成功后主进程直接把新凭据与续期材料写进该账号 */
+    accountId?: string
+  }): Promise<{ ok: boolean; cookie?: string; error?: string; canRenew?: boolean }>
+
+  /** 静默续期登录：用保存的会话换新凭据（不弹窗、不需要密码）；失败说明会话已彻底失效 */
+  renewAccount(id: string): Promise<{ ok: boolean; error: string; needLogin: boolean; expiresAt: number | null }>
   /** 取实时汇率（成本折算用） */
   getFx(): Promise<FxInfo>
   /** 取某账号的余额快照（趋势图用） */

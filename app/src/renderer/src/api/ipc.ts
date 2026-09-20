@@ -80,7 +80,10 @@ export async function safeInvoke<T = unknown>(
         res = await api.openDataDir()
         break
       case IPC.ACCOUNT_LOGIN:
-        res = await api.loginSite(payload as { url: string; name: string; platform?: string; extraUrls?: string[] })
+        res = await api.loginSite(payload as { url: string; name: string; platform?: string; extraUrls?: string[]; accountId?: string })
+        break
+      case IPC.ACCOUNT_RENEW:
+        res = await api.renewAccount((payload as { id: string }).id)
         break
       case IPC.FX_GET:
         res = await api.getFx()
@@ -217,9 +220,21 @@ export async function loginSite(
   url: string,
   name: string,
   platform?: string,
-  extraUrls?: string[]
-): Promise<RpcResult<{ ok: boolean; cookie?: string; error?: string }>> {
-  return safeInvoke<{ ok: boolean; cookie?: string; error?: string }>(IPC.ACCOUNT_LOGIN, { url, name, platform, extraUrls })
+  extraUrls?: string[],
+  accountId?: string
+): Promise<RpcResult<{ ok: boolean; cookie?: string; error?: string; canRenew?: boolean }>> {
+  return safeInvoke<{ ok: boolean; cookie?: string; error?: string; canRenew?: boolean }>(IPC.ACCOUNT_LOGIN, {
+    url,
+    name,
+    platform,
+    extraUrls,
+    accountId
+  })
+}
+
+/** 静默续期登录（用保存的会话换新凭据，不弹窗） */
+export async function renewAccount(id: string): Promise<RpcResult<{ ok: boolean; error: string; needLogin: boolean; expiresAt: number | null }>> {
+  return safeInvoke<{ ok: boolean; error: string; needLogin: boolean; expiresAt: number | null }>(IPC.ACCOUNT_RENEW, { id })
 }
 
 /** 取实时汇率（成本折算用） */

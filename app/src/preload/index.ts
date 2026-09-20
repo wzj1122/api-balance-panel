@@ -69,8 +69,13 @@ const api: PanelApi = {
     return ipcRenderer.invoke(IPC.APP_OPEN_DATA_DIR)
   },
 
-  loginSite(payload: { url: string; name: string; platform?: string; extraUrls?: string[] }): Promise<{ ok: boolean; cookie?: string; error?: string }> {
+  loginSite(payload: { url: string; name: string; platform?: string; extraUrls?: string[]; accountId?: string }): Promise<{ ok: boolean; cookie?: string; error?: string; canRenew?: boolean }> {
     return ipcRenderer.invoke(IPC.ACCOUNT_LOGIN, payload)
+  },
+
+  /** 静默续期登录（用保存的会话换新凭据） */
+  renewAccount(id: string): Promise<{ ok: boolean; error: string; needLogin: boolean; expiresAt: number | null }> {
+    return ipcRenderer.invoke(IPC.ACCOUNT_RENEW, { id })
   },
 
   getFx(): Promise<FxInfo> {

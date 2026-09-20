@@ -12,13 +12,29 @@ const props = defineProps<{
   refreshing?: boolean
   /** 每日统计同源的账号数据：余额耗尽预估 + 累计总额（进度条分母） */
   forecast?: DailyAccount | null
+  /** 该账号是否正在静默续期 */
+  renewing?: boolean
 }>()
 
 const emit = defineEmits<{
   (e: 'refresh', id: string): void
   (e: 'edit', id: string): void
   (e: 'remove', id: string): void
+  /** 静默续期登录（用保存的会话换新凭据） */
+  (e: 'renew', id: string): void
 }>()
+
+/** 支持静默续期的平台（登录型）：商汤 / 小米 MiMo */
+const RENEWABLE = new Set<AccountType>(['sensenova', 'mimo', 'mimo-plan'])
+const canRenew = computed(() => RENEWABLE.has(props.row.type))
+
+/** 续期按钮状态：正在续期 / 提示文案 */
+const renewing = computed(() => props.renewing === true)
+const renewTitle = computed(() =>
+  renewing.value
+    ? '正在静默续期…'
+    : '续期登录（用已有会话自动换新凭据，不需要重新输密码）'
+)
 
 /** 平台品牌色映射（驱动卡片点缀色） */
 const PLATFORM_COLORS: Record<AccountType, string> = {
@@ -252,6 +268,21 @@ async function toggleTrend(): Promise<void> {
             <path
               fill="currentColor"
               d="M8 3a5 5 0 1 0 4.6 3H11a3.5 3.5 0 1 1-.9-2.3L9.2 4.4H12V2L9.6 2.2A5 5 0 0 0 8 3Z"
+            />
+          </svg>
+        </button>
+        <button
+          v-if="canRenew"
+          class="icon-btn"
+          type="button"
+          :title="renewTitle"
+          :disabled="renewing"
+          @click="emit('renew', row.accountId)"
+        >
+          <svg class="ico" :class="{ spin: renewing }" viewBox="0 0 16 16" width="14" height="14">
+            <path
+              fill="currentColor"
+              d="M8 2a6 6 0 0 1 5.7 4.1l.9-.9a.8.8 0 1 1 1.1 1.1l-2.3 2.3a.8.8 0 0 1-1.1 0L10 6.3a.8.8 0 0 1 1.1-1.1l1 1A4.4 4.4 0 0 0 8 3.6 4.4 4.4 0 0 0 3.6 8 .8.8 0 1 1 2 8a6 6 0 0 1 6-6Zm-4.4 7.6 2.3 2.3a.8.8 0 0 1-1.1 1.1l-1-1A4.4 4.4 0 0 0 8 12.4 4.4 4.4 0 0 0 12.4 8a.8.8 0 1 1 1.6 0 6 6 0 0 1-10.4 4.1l-.9.9a.8.8 0 0 1-1.1-1.1l.8-.8Z"
             />
           </svg>
         </button>

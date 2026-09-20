@@ -175,13 +175,16 @@ async function doLogin() {
   const loginUrl = LOGIN_URLS[form.type] ?? SILICONFLOW_LOGIN_URL
   // MiniMax 控制台与钱包接口域名不同，两个域名的 Cookie 都要抓
   const extraUrls = form.type === 'minimax' ? ['https://www.minimaxi.com'] : undefined
-  const r = await loginSite(loginUrl, meta().label, form.type, extraUrls)
+  // 编辑已有账号时把 id 传过去：主进程登录成功后会顺手把「续期材料」存进该账号，
+  // 之后就能自动续期，不用反复重新登录
+  const r = await loginSite(loginUrl, meta().label, form.type, extraUrls, form.id || undefined)
   loginBusy.value = false
   if (r.ok && r.data?.cookie) {
     form.secret = r.data.cookie
+    const renewHint = r.data.canRenew ? '（已保存续期材料，之后会自动延长登录有效期）' : ''
     loginStatus.value = form.type === 'sensenova'
-      ? '已获取登录态，保存后自动抓取额度（约 3 小时过期，过期后重新登录即可）'
-      : '已获取 Cookie，保存后自动抓取余额'
+      ? '已获取登录态，保存后自动抓取额度' + renewHint
+      : '已获取 Cookie，保存后自动抓取余额' + renewHint
   } else {
     loginStatus.value = r.ok ? r.data?.error || '未获取到登录凭据' : r.error
   }

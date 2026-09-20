@@ -1,6 +1,6 @@
 import { IPC } from '../shared/ipc'
 import type { RefreshPayload } from '../shared/ipc'
-import type { Account, BalanceResult, BalanceRow, PanelPayload } from '../shared/types'
+import type { Account, BalanceResult, BalanceRow, CredentialSession, PanelPayload } from '../shared/types'
 import { getAdapter } from './adapters'
 import { AdapterError, failResult, mapFetchError } from './errors'
 import { logger } from './logger'
@@ -8,6 +8,7 @@ import { maybeNotify } from './notify'
 import { isDemo, demoRows } from './demo'
 import { updateTray } from './tray'
 import { runPool } from './runPool'
+import { renewCredential, msUntilExpiry, supportsRenewal } from './renewal'
 import * as snapshot from './snapshot'
 import { store } from './store'
 import { getMainWindow } from './window'
@@ -36,8 +37,41 @@ function push(channel: string, payload: unknown): void {
   }
 }
 
+/** 构造适配器上下文（凭据读写都走 store，明文只在主进程内存） */
+function adapterCtx() {
+  return {
+    getSecret: (a: Account): string => store.getSecret(a),
+    getSession: (a: Account): CredentialSession | null => store.getSession(a),
+    saveRenewed: (a: Account, token: string, session: CredentialSession | null): void => {
+      store.saveCredential(a.id, { secret: token, session })
+      logger.info(`[query] ${a.name} 已回写续期后的凭据`)
+    }
+  }
+}
+
+/**
+ * 给某个账号做一次静默续期，成功则落盘并返回 true。
+ * @param reason 'expired' 到期/失败后自动续期；'manual' 用户点卡片按钮；'startup' 启动时预热
+ */
+export async function renewForAccount(account: Account, reason: 'expired' | 'manual' | 'startup'): Promise<boolean> {
+  if (!supportsRenewal(account.type)) return false
+  const session = store.getSession(account)
+  const r = await renewCredential(account.type, session, { reason })
+  // 无论成功失败都把最新的会话材料存下来（失败时也更新，便于下次判断会话是否已失效）
+  if (r.session) store.saveCredential(account.id, { session: r.session })
+  if (!r.ok || !r.secret) {
+    if (r.session) store.saveCredential(account.id, { tokenExpiresAt: 0 })
+    return false
+  }
+  store.saveCredential(account.id, { secret: r.secret, session: r.session ?? session, tokenExpiresAt: r.expiresAt ?? null })
+  invalidateCache(account.id)
+  logger.info(`[query] ${account.name} 静默续期成功（${reason}），凭据有效期至 ${r.expiresAt ? new Date(r.expiresAt).toLocaleString('zh-CN') : '未知'}`)
+  return true
+}
+
 /** 单账号查询；force 为 true 时跳过缓存 */
-async function queryAccount(account: Account, force: boolean): Promise<BalanceRow> {
+async function queryAccount(accountInput: Account, force: boolean): Promise<BalanceRow> {
+  let account = accountInput
   const settings = store.getSettings()
 
   if (!force) {
@@ -48,15 +82,39 @@ async function queryAccount(account: Account, force: boolean): Promise<BalanceRo
   }
 
   const started = Date.now()
+
+  // 凭据临期（或已过期）→ 先静默续期，避免"正好卡在过期那一刻"报一次失败
+  if (supportsRenewal(account.type)) {
+    const left = msUntilExpiry(account)
+    if (left !== null && left < 15 * 60 * 1000) {
+      logger.info(`[query] ${account.name} 凭据${left <= 0 ? '已过期' : '将在 ' + Math.round(left / 60000) + ' 分钟后过期'}，先静默续期`)
+      await renewForAccount(account, 'expired')
+      account = store.getAccount(account.id) ?? account
+    }
+  }
+
   let result: BalanceResult
   try {
     const adapter = getAdapter(account.type)
-    result = await adapter(account, { getSecret: (a) => store.getSecret(a) })
+    result = await adapter(account, adapterCtx())
   } catch (e) {
     const code = e instanceof AdapterError ? e.code : mapFetchError(e)
     const detail = e instanceof AdapterError ? e.detail : String((e as Error)?.message ?? e)
     logger.warn(`[query] ${account.name} 查询失败：${code}${detail ? ` ${detail}` : ''}`)
     result = failResult(code, detail)
+    // 凭据过期且该平台支持静默续期：后台续一次再重试（用户不用手动重新登录）
+    if (code === 'COOKIE_EXPIRED' && (await renewForAccount(account, 'expired'))) {
+      try {
+        const fresh = store.getAccount(account.id) ?? account
+        result = await getAdapter(account.type)(fresh, adapterCtx())
+        logger.info(`[query] ${account.name} 续期后重试成功`)
+      } catch (e2) {
+        const code2 = e2 instanceof AdapterError ? e2.code : mapFetchError(e2)
+        const detail2 = e2 instanceof AdapterError ? e2.detail : String((e2 as Error)?.message ?? e2)
+        logger.warn(`[query] ${account.name} 续期后仍失败：${code2}${detail2 ? ` ${detail2}` : ''}`)
+        result = failResult(code2, detail2)
+      }
+    }
   }
   result.latencyMs = Date.now() - started
 
@@ -142,4 +200,47 @@ export async function refresh(payload?: RefreshPayload): Promise<PanelPayload> {
 export function invalidateCache(accountId?: string): void {
   if (accountId) cache.delete(accountId)
   else cache.clear()
+}
+
+// ---------- 后台保活（会话预热） ----------
+
+/** 保活定时器 */
+let keepAliveTimer: NodeJS.Timeout | null = null
+
+/**
+ * 扫描所有登录型账号，把「即将过期 / 已过期 / 从未记录过期时间」的凭据续一遍。
+ * 由 main/index.ts 定时调用：**窗口隐藏或最小化时同样运行**（保活就是要一直跑）。
+ *
+ * @param maxAgeMs 距离过期还有多久就续（默认 60 分钟）
+ */
+export async function keepAliveSessions(maxAgeMs = 60 * 60 * 1000): Promise<number> {
+  if (isDemo()) return 0
+  const targets = store.listAccounts().filter((a) => a.enabled && !a.deleted_at && supportsRenewal(a.type))
+  let renewed = 0
+  for (const acc of targets) {
+    const left = msUntilExpiry(acc)
+    const needRenew = left === null ? Boolean(store.getSession(acc)) : left < maxAgeMs
+    if (!needRenew) continue
+    try {
+      if (await renewForAccount(acc, 'startup')) renewed++
+    } catch (e) {
+      logger.warn(`[keepalive] ${acc.name} 续期异常：${(e as Error).message}`)
+    }
+  }
+  if (renewed > 0) logger.info(`[keepalive] 本轮续期 ${renewed} 个账号`)
+  return renewed
+}
+
+/** 启动保活定时器（应用启动 / 退出时调用一次） */
+export function startKeepAlive(intervalMs = 20 * 60 * 1000): void {
+  if (keepAliveTimer) return
+  keepAliveTimer = setInterval(() => {
+    void keepAliveSessions().catch((e: unknown) => logger.warn('[keepalive] 保活失败：' + (e as Error).message))
+  }, intervalMs)
+  logger.info(`[keepalive] 会话保活已启动（每 ${Math.round(intervalMs / 60000)} 分钟检查一次，窗口隐藏时同样运行）`)
+}
+
+export function stopKeepAlive(): void {
+  if (keepAliveTimer) clearInterval(keepAliveTimer)
+  keepAliveTimer = null
 }

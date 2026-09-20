@@ -7,7 +7,7 @@ import { DATA_DIR, ensureDirs } from './paths'
 import { scheduler } from './scheduler'
 import { store } from './store'
 import { runDueMonitors } from './monitor'
-import { refresh } from './query'
+import { refresh, keepAliveSessions, startKeepAlive, stopKeepAlive } from './query'
 import { createTray, destroyTray, updateTray } from './tray'
 import { createWindow, isAutoStartLaunch, setQuitting, showMainWindow } from './window'
 
@@ -107,6 +107,14 @@ void app.whenReady().then(() => {
     win.on('restore', resumeIfSet)
     // 托盘提示同步真实的暂停状态（开机自启常驻时不应显示「已暂停刷新」）
     updateTray(undefined, scheduler.isPaused())
+
+    // 会话保活：登录型平台（商汤 / 小米 MiMo）的 token 只有几小时，
+    // 这里每 20 分钟检查一次、临期就用会话静默换新，窗口隐藏/最小化时同样运行。
+    // 首次延迟 20 秒执行，避免和启动刷新抢网络。
+    setTimeout(() => {
+      void keepAliveSessions().catch((e: unknown) => logger.warn('[keepalive] 首轮保活失败：' + (e as Error).message))
+    }, 20 * 1000)
+    startKeepAlive()
   })
 
   app.on('window-all-closed', () => {
@@ -116,6 +124,7 @@ void app.whenReady().then(() => {
   app.on('before-quit', () => {
     setQuitting(true)
     scheduler.stop()
+    stopKeepAlive()
     if (monitorTimer) clearInterval(monitorTimer)
     destroyTray()
     logger.info('[app] 退出')

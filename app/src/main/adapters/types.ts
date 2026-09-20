@@ -1,4 +1,4 @@
-import type { Account, BalanceResult } from '../../shared/types'
+import type { Account, BalanceResult, CredentialSession } from '../../shared/types'
 
 /**
  * 适配器统一接口。
@@ -12,6 +12,10 @@ import type { Account, BalanceResult } from '../../shared/types'
 export interface AdapterContext {
   /** 取账号的明文密钥。明文只存在于主进程内存，绝不跨 IPC 传输。 */
   getSecret: (account: Account) => string
+  /** 取账号保存的「会话凭据」（用于静默续期：token 过期时用会话换新的） */
+  getSession?: (account: Account) => CredentialSession | null
+  /** 续期成功后回写：新凭据 + 新会话（由主进程加密落盘） */
+  saveRenewed?: (account: Account, token: string, session: CredentialSession | null) => void
 }
 
 /**

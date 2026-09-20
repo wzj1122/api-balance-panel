@@ -5,6 +5,7 @@ import {
   MINIMAX_BACKEND_CN,
   SENSENOVA_POOL_USAGE_URL
 } from '../../shared/constants'
+import type { CredentialSession } from '../../shared/types'
 import { logger } from '../logger'
 
 /**
@@ -21,6 +22,8 @@ export interface LoginResult {
   ok: boolean
   cookie?: string
   error?: string
+  /** 续期材料（会话 Cookie 串等）；登录成功且配置了 collectSession 时才有 */
+  session?: CredentialSession | null
 }
 
 export interface LoginSuccessRule {
@@ -45,6 +48,12 @@ export interface LoginOptions {
   tokenKey?: string
   /** 抓完 token 后立即校验（与 validate 二选一，tokenKey 存在时用它） */
   validateToken?: (token: string) => Promise<string | null>
+  /**
+   * 登录成功后采集「续期材料」（会话 Cookie 串等）。
+   * 登录型平台的 token 只活几小时，但有会话 Cookie 就能静默换新；
+   * 把登录这一刻的会话存下来，之后就能自动续期，用户不用反复重新登录。
+   */
+  collectSession?: (info: { cookie: string; token: string }) => Promise<CredentialSession | null>
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -322,7 +331,17 @@ export function loginToSite(opts: LoginOptions): Promise<LoginResult> {
         } catch (e) {
           logger.warn('[browser] 自动校验失败：' + (e as Error).message)
         }
-        if (Date.now() - matchedAt > 60000) {
+        if (Date.now() - matchedAt > (loginRounds === 1 ? 20000 : 60000)) {
+          // 第一轮（复用会话）只等 20 秒：会话还有效的话早就换回 token 了；
+          // 超过就清空凭据、进入正常的登录流程，避免用户干等。
+          if (loginRounds < MAX_LOGIN_ROUNDS) {
+            logger.info(`[browser] ${opts.name} 复用会话未成功（20 秒内没拿到可用登录态），改为清空凭据后正常登录`)
+            try { win.setTitle('登录 ' + opts.name + '：请登录（登录完成后窗口会自动关闭）') } catch { /* 忽略 */ }
+            matchedAt = Date.now()
+            autoClosing = false
+            openWith(true)
+            return
+          }
           let lastUrl = ''
           try { lastUrl = win.webContents.getURL() } catch { /* 忽略 */ }
           logger.warn(`[browser] ${opts.name} 自动检测超时（最后停在：${lastUrl}；${lastNote || '未读到登录态'}）`)
@@ -336,9 +355,25 @@ export function loginToSite(opts: LoginOptions): Promise<LoginResult> {
     }
     const timer = setInterval(() => { void poll() }, 800)
 
+    /** 登录成功后组装续期材料（会话 Cookie + 登录态元信息）；采集失败不影响登录本身 */
+    const buildSession = async (credential: string): Promise<CredentialSession | null> => {
+      if (!opts.collectSession) return null
+      try {
+        const s = await opts.collectSession({ cookie: credential, token: credential })
+        if (s) {
+          logger.info('[browser] ' + opts.name + ' 已采集续期材料（会话 Cookie ' + s.cookies.split('; ').filter(Boolean).length + ' 个）')
+        }
+        return s
+      } catch (e) {
+        logger.warn('[browser] ' + opts.name + ' 采集续期材料失败：' + (e as Error).message)
+        return null
+      }
+    }
+
     win.on('closed', () => {
       clearInterval(timer)
-      if (settled && !pendingCredential) return
+      // 只有"校验通过后主动关窗"这一种情况可以跳过：那时已准备好凭据
+      if (settled && pendingCredential) return
       const alreadyValidated = pendingCredential
       settled = true
       void (async () => {
@@ -366,7 +401,7 @@ export function loginToSite(opts: LoginOptions): Promise<LoginResult> {
               }
             }
             logger.info('[browser] ' + opts.name + ' 登录完成，已获取登录态（token 长度 ' + token.length + '）')
-            resolve({ ok: true, cookie: token })
+            resolve({ ok: true, cookie: token, session: await buildSession(token) })
             return
           }
           const cookieStr = await collectCookies(ses, urls)
@@ -383,31 +418,55 @@ export function loginToSite(opts: LoginOptions): Promise<LoginResult> {
               return
             }
           }
-          resolve({ ok: true, cookie: cookieStr })
+          resolve({ ok: true, cookie: cookieStr, session: await buildSession(cookieStr) })
         } catch (e) {
           resolve({ ok: false, error: '读取登录凭据失败：' + (e as Error).message })
         }
       })()
     })
 
-    // 清掉这个登录分区里的历史凭据（先清空再加载页面，顺序很重要），
-    // 这样校验只针对「本次登录」，不会因为旧会话残留而一开窗就误判通过。
-    // 注意：必须连 localStorage 一起清 —— 商汤这类平台把 access_token 存在 localStorage，
-    // 只清 Cookie 会留下上一次的过期 token，导致"校验用旧 token 通过了、刷新时又过期"的鬼打墙。
-    let windowAlive = true
-    win.on('closed', () => { windowAlive = false })
-    void ses
-      .clearStorageData({ storages: ['cookies', 'localstorage'] })
-      .then(() => logger.info('[browser] 已清空登录窗口的历史凭据（Cookie + localStorage，避免旧会话干扰）'))
-      .catch((e: unknown) => logger.warn('[browser] 清空历史凭据失败：' + (e as Error).message))
-      .finally(() => {
+    /**
+     * 打开页面（两种策略，最多走两轮）：
+     * A. 先**复用**分区里的既有会话（上次登录留下的 Cookie）→ 平台若认这个会话，会自己换出新 token，
+     *    轮询读到并通过校验就自动关窗，**用户不用输密码**。这是延长登录有效期的关键。
+     * B. 复用失败（没有会话 Cookie / 会话已失效 / 旧 token 校验不通过）→ 清空凭据重开一次，
+     *    让用户正常登录（清空是为了避免过期 token 让校验"假通过"，这个坑真实发生过）。
+     */
+    let loginRounds = 0
+    const MAX_LOGIN_ROUNDS = 2
+
+    const openWith = (clearFirst: boolean): void => {
+      loginRounds++
+      const go = (): void => {
         try {
           void win.loadURL(opts.url)
         } catch (e) {
           logger.warn('[browser] 加载登录页失败：' + (e as Error).message)
         }
-      })
-    logger.info('[browser] 打开登录窗口：' + opts.name + '（' + opts.url + '）')
+      }
+      if (!clearFirst) {
+        logger.info('[browser] 先尝试复用登录分区里的既有会话（不清空凭据）')
+        go()
+        return
+      }
+      void ses
+        .clearStorageData({ storages: ['cookies', 'localstorage'] })
+        .then(() => logger.info('[browser] 已清空登录窗口的历史凭据（Cookie + localStorage），等待正常登录'))
+        .catch((e: unknown) => logger.warn('[browser] 清空历史凭据失败：' + (e as Error).message))
+        .finally(go)
+    }
+
+    void (async () => {
+      let hasSessionCookie = false
+      try {
+        const all = await ses.cookies.get({})
+        hasSessionCookie = all.some(
+          (c) => c.name.startsWith('oauth2_') || c.name.startsWith('api-platform_') || c.name === 'passToken'
+        )
+      } catch { /* 读不到就当没有，走清空路径 */ }
+      logger.info('[browser] 打开登录窗口：' + opts.name + '（' + opts.url + '）' + (hasSessionCookie ? ' · 检测到既有会话，先试静默续期' : ''))
+      openWith(!hasSessionCookie)
+    })()
   })
 }
 

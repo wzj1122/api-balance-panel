@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import { ACCOUNT_TYPES, DEFAULT_QUOTA_PER_USD, DEFAULT_SETTINGS, PROVIDER_META } from '../shared/constants'
 import { maskSecret } from '../shared/format'
-import type { Account, AccountInput, AccountType, AccountView, Settings } from '../shared/types'
+import type { Account, AccountInput, AccountType, CredentialSession, Settings, AccountView } from '../shared/types'
 import { CRYPTO_VERSION, currentScheme, decrypt, encrypt } from './crypto'
 import type { CryptoScheme } from './crypto'
 import { logger } from './logger'
@@ -153,6 +153,8 @@ export function normalizeAccount(raw: unknown): Account | null {
     enabled: boolOr(raw.enabled, true),
     secret_enc: typeof raw.secret_enc === 'string' && raw.secret_enc ? raw.secret_enc : null,
     secret_masked: strOr(raw.secret_masked),
+    session_enc: typeof raw.session_enc === 'string' && raw.session_enc ? raw.session_enc : null,
+    token_expires_at: numOrNull(raw.token_expires_at),
     deleted_at: typeof raw.deleted_at === 'number' ? raw.deleted_at : null,
     created_at: numOr(raw.created_at, now),
     updated_at: numOr(raw.updated_at, now)
@@ -369,6 +371,9 @@ export class Store {
       enabled: typeof input.enabled === 'boolean' ? input.enabled : true,
       secret_enc: secretEnc,
       secret_masked: secretMasked,
+      // 续期材料沿用已有值（由 saveSession 单独更新），避免保存账号时被清掉
+      session_enc: existing?.session_enc ?? null,
+      token_expires_at: existing?.token_expires_at ?? null,
       created_at: existing ? existing.created_at : now,
       updated_at: now
     }
@@ -449,6 +454,50 @@ export class Store {
       plain = decrypt(account.secret_enc, other)
     }
     return plain
+  }
+
+  // ---------- 会话凭据（登录型平台的续期材料） ----------
+
+  /** 读会话凭据（没有 / 解不开返回 null） */
+  getSession(account: Account): CredentialSession | null {
+    const enc = account.session_enc
+    if (!enc) return null
+    const scheme = this.config.crypto?.scheme ?? currentScheme()
+    for (const s of [scheme, scheme === 'safeStorage-v1' ? 'obfuscate-v1' : 'safeStorage-v1'] as CryptoScheme[]) {
+      const plain = decrypt(enc, s)
+      if (!plain) continue
+      try {
+        const parsed = JSON.parse(plain) as CredentialSession
+        if (parsed && typeof parsed.cookies === 'string') return parsed
+      } catch {
+        /* 试下一种方案 */
+      }
+    }
+    return null
+  }
+
+  /**
+   * 保存/更新一个账号的凭据（密钥 + 会话 + 过期时间）。
+   * 供「静默续期」回写用：续期成功后把新 token 与新会话一起落盘，下次继续可用。
+   */
+  saveCredential(id: string, patch: { secret?: string; session?: CredentialSession | null; tokenExpiresAt?: number | null }): boolean {
+    this.ensureLoaded()
+    const acc = this.config.accounts.find((a) => a.id === id)
+    if (!acc) return false
+    if (typeof patch.secret === 'string' && patch.secret.length > 0) {
+      acc.secret_enc = encrypt(patch.secret)
+      acc.secret_masked = maskSecret(patch.secret)
+      this.config.crypto = { scheme: currentScheme(), version: CRYPTO_VERSION }
+    }
+    if (patch.session !== undefined) {
+      acc.session_enc = patch.session ? encrypt(JSON.stringify(patch.session)) : null
+    }
+    if (patch.tokenExpiresAt !== undefined) {
+      acc.token_expires_at = patch.tokenExpiresAt
+    }
+    acc.updated_at = Date.now()
+    this.save()
+    return true
   }
 
   // ---------- 设置 ----------

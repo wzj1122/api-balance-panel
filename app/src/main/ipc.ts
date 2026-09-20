@@ -1,8 +1,8 @@
-import { app, ipcMain, Notification, shell } from 'electron'
+import { app, ipcMain, Notification, session, shell } from 'electron'
 import { MIMO_BALANCE_URL, SENSENOVA_TOKEN_KEY } from '../shared/constants'
 import { IPC } from '../shared/ipc'
 import type { RefreshPayload } from '../shared/ipc'
-import type { AccountInput, AppInfo, MonitorInput, ReportPeriod, Settings, LogLevel, KeyVaultInput } from '../shared/types'
+import type { AccountInput, AppInfo, CredentialSession, MonitorInput, ReportPeriod, Settings, LogLevel, KeyVaultInput } from '../shared/types'
 import { applyAutoStart, getAutoStartStatus } from './autostart'
 import { backgroundData, backgroundForTheme, importBackground, listBackgrounds, removeBackground } from './bgstore'
 import { exportBackup, importBackup } from './backup'
@@ -15,7 +15,8 @@ import { isDemo, setDemo } from './demo'
 import { getFx } from './fx'
 import { clearLogs, exportLogs, getLogLevel, listLogFiles, logger, readLogs, setLogLevel } from './logger'
 import { CONFIG_FILE, DATA_DIR, LOG_DIR } from './paths'
-import { invalidateCache, refresh } from './query'
+import { invalidateCache, refresh, renewForAccount } from './query'
+import { jwtExpiry, supportsRenewal } from './renewal'
 import { closeWindow, isWindowMaximized, minimizeWindow, toggleMaximizeWindow } from './window'
 import { scheduler } from './scheduler'
 import { buildDailyUsage, buildPlatformUsage, buildUsageReport } from './usage'
@@ -144,7 +145,14 @@ export function registerIpc(): void {
 
   // 打开内置浏览器登录站点，返回抓到的 Cookie（mimo 等需登录的平台）
   wrap(IPC.ACCOUNT_LOGIN, async (payload) => {
-    const p = asRecord(payload) as unknown as { url?: string; name?: string; platform?: string; extraUrls?: string[] }
+    const p = asRecord(payload) as unknown as {
+      url?: string
+      name?: string
+      platform?: string
+      extraUrls?: string[]
+      /** 已有账号 id（编辑时传）：登录成功后把「续期材料」直接存到该账号 */
+      accountId?: string
+    }
     if (typeof p.url !== 'string' || !p.url) throw new Error('缺少登录地址')
     // 各平台的「自动关闭」规则：进入控制台 URL 后校验会话，通过即自动关窗
     const rules: Partial<
@@ -157,6 +165,10 @@ export function registerIpc(): void {
           /** 登录态存放在 localStorage 里的平台（商汤日日新）：抓 token 而不是 Cookie */
           tokenKey?: string
           validateToken?: (t: string) => Promise<string | null>
+          /** 采集续期材料用的域名（会话 Cookie 可能分布在多个域） */
+          cookieUrls?: string[]
+          /** 续期材料里的登录态键名（tokenKey 平台用） */
+          sessionTokenKey?: string
         }
       >
     > = {
@@ -164,11 +176,13 @@ export function registerIpc(): void {
         // 登录页在 account.xiaomi.com（小米账号中心），但余额接口需要 platform 域的登录态，
         // 所以必须把这些域名的 Cookie 一并抓下来，否则校验永远 401。
         extra: ['https://platform.xiaomimimo.com', 'https://xiaomimimo.com'],
-        validate: validateByUrl(MIMO_BALANCE_URL)
+        validate: validateByUrl(MIMO_BALANCE_URL),
+        cookieUrls: ['https://platform.xiaomimimo.com', 'https://xiaomimimo.com', 'https://account.xiaomi.com']
       },
       'mimo-plan': {
         extra: ['https://platform.xiaomimimo.com', 'https://xiaomimimo.com'],
-        validate: validateByUrl(MIMO_BALANCE_URL)
+        validate: validateByUrl(MIMO_BALANCE_URL),
+        cookieUrls: ['https://platform.xiaomimimo.com', 'https://xiaomimimo.com', 'https://account.xiaomi.com']
       },
       minimax: {
         success: { hosts: ['platform.minimaxi.com', 'platform.minimax.cn'], pathPrefix: '/console/' },
@@ -188,7 +202,9 @@ export function registerIpc(): void {
         // 商汤日日新的额度接口只认登录态（Bearer token，存在 localStorage.access_token），
         // Cookie 抓了也没用（实测 401），所以这里走 tokenKey 分支。
         tokenKey: SENSENOVA_TOKEN_KEY,
-        validateToken: validateSenseNovaToken
+        validateToken: validateSenseNovaToken,
+        cookieUrls: ['https://platform.sensenova.cn', 'https://iam.sensecoreapi.cn'],
+        sessionTokenKey: SENSENOVA_TOKEN_KEY
       }
     }
     const rule = p.platform ? rules[p.platform] : undefined
@@ -198,15 +214,89 @@ export function registerIpc(): void {
         ...(rule?.extra ?? [])
       ])
     )
-    return loginToSite({
+    // 采集「续期材料」：登录这一刻的会话 Cookie 是后续静默续期的钥匙，必须一起存下来
+    const sessionUrls = rule?.cookieUrls?.length ? rule.cookieUrls : extraUrls.length ? extraUrls : [p.url]
+    const collectSession = rule?.cookieUrls
+      ? async (): Promise<CredentialSession | null> => {
+          const ses = session.fromPartition('persist:login-' + new URL(p.url as string).hostname)
+          const parts: string[] = []
+          const seen = new Set<string>()
+          for (const u of sessionUrls) {
+            const list = await ses.cookies.get({ url: u }).catch(() => [])
+            for (const c of list) {
+              const k = c.name + '\u0000' + (c.domain ?? '')
+              if (seen.has(k)) continue
+              seen.add(k)
+              parts.push(c.name + '=' + c.value)
+            }
+          }
+          if (parts.length === 0) return null
+          return {
+            ts: Date.now(),
+            cookies: parts.join('; '),
+            tokenKey: rule?.sessionTokenKey ?? '',
+            tokenLen: 0,
+            v: 1
+          }
+        }
+      : undefined
+
+    const result = await loginToSite({
       url: p.url,
       name: typeof p.name === 'string' && p.name ? p.name : '站点',
       extraUrls,
       success: rule?.success,
       validate: rule?.validate,
       tokenKey: rule?.tokenKey,
-      validateToken: rule?.validateToken
+      validateToken: rule?.validateToken,
+      collectSession
     })
+
+    // 登录成功就把新凭据 + 续期材料一起写进账号，之后由后台保活自动续期
+    if (result.ok && result.cookie && typeof p.accountId === 'string' && p.accountId) {
+      const session = result.session ?? null
+      const exp = jwtExpiry(result.cookie)
+      store.saveCredential(p.accountId, {
+        secret: result.cookie,
+        session,
+        tokenExpiresAt: exp
+      })
+      logger.info(
+        `[ipc] 账号 ${p.accountId} 已保存登录凭据（续期材料：${session ? session.cookies.split('; ').filter(Boolean).length + ' 个 Cookie' : '无'}；凭据有效至 ${exp ? new Date(exp).toLocaleString('zh-CN') : '未知'}）`
+      )
+    }
+    return {
+      ok: result.ok,
+      cookie: result.cookie,
+      error: result.error,
+      // 告诉界面：这个平台是否具备"自动续期"能力（用于提示文案）
+      canRenew: Boolean(rule?.cookieUrls)
+    }
+  })
+
+  // 手动续期登录（卡片上的「续期登录」按钮）
+  wrap(IPC.ACCOUNT_RENEW, async (payload) => {
+    const p = asRecord(payload) as { id?: string }
+    const id = typeof p.id === 'string' ? p.id : ''
+    if (!id) throw new Error('缺少账号 id')
+    const account = store.getAccount(id)
+    if (!account) throw new Error('账号不存在')
+    if (!supportsRenewal(account.type)) {
+      return { ok: false, error: '该平台不支持静默续期（只有登录型平台支持）', needLogin: false, expiresAt: null }
+    }
+    const ok = await renewForAccount(account, 'manual')
+    const after = store.getAccount(id)
+    if (!ok) {
+      // 静默续期没成功：告诉界面"需要重新登录一次"，界面会直接把登录窗口打开（一步到位）
+      return {
+        ok: false,
+        error: '会话已失效，需要重新登录一次',
+        needLogin: true,
+        expiresAt: after?.token_expires_at ?? null
+      }
+    }
+    invalidateCache(id)
+    return { ok: true, error: '', needLogin: false, expiresAt: after?.token_expires_at ?? null }
   })
 
   // 每日使用状况统计（主进程按快照聚合，返回报告）
