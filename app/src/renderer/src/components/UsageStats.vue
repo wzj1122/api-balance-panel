@@ -139,8 +139,8 @@ function typeLabel(t: string): string {
 }
 
 /**
- * 逐日单元格的悬浮说明：把「为什么这格是黄的 / 为什么写『充值』」讲到具体数字。
- * 之前只有颜色没有说明，用户看不出黄色有什么特殊含义。
+ * 逐日单元格的悬浮说明：把「这格为什么是红的 / 为什么写『充值』」讲到具体数字。
+ * 表格只用红色一种强调色，所以原因全靠悬浮提示说清楚。
  */
 function dayCellTitle(a: DailyAccount, i: number, v: number | null): string {
   const day = report.value?.days[i]?.label ?? ''
@@ -159,10 +159,11 @@ function dayCellTitle(a: DailyAccount, i: number, v: number | null): string {
   return parts.join(' · ')
 }
 
+/** 预计耗尽：只在"快用完了"（< 3 天）标红；其余保持普通字色，不再有黄色档位（用户反馈太乱） */
 function fcastCell(a: DailyAccount): { text: string; cls: string } {
   if (a.forecastDaysLeft === null || a.forecastDaysLeft === undefined) return { text: '—', cls: '' }
-  if (a.forecastDaysLeft > 365) return { text: '余量充足', cls: 'ok' }
-  const cls = a.forecastDaysLeft < 3 ? 'danger' : a.forecastDaysLeft < 14 ? 'warn' : ''
+  if (a.forecastDaysLeft > 365) return { text: '余量充足', cls: '' }
+  const cls = a.forecastDaysLeft < 3 ? 'danger' : ''
   const d = a.estEmptyTs ? new Date(a.estEmptyTs) : null
   const md = d ? String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0') : ''
   return { text: '约 ' + Math.ceil(a.forecastDaysLeft) + ' 天' + (md ? '（' + md + '）' : ''), cls }
@@ -261,14 +262,6 @@ function exportCsv() {
           <span>检测到<strong>停机期间消耗</strong>（软件未运行，无法按天归属）：</span>
           <b v-for="g in gapNotes" :key="g.unit" class="num gap-val">{{ fmtNumber(g.value) }} {{ g.unit }}</b>
           <span class="muted">已<strong>计入下方「合计（含停机）」</strong>，但不计入日均、耗尽预估与预算判断。</span>
-        </div>
-
-        <!-- 表格里的黄色数字到底代表什么：以前只有颜色、没有任何说明，看着像随机标黄 -->
-        <div class="tbl-legend">
-          <span class="lg-title">表格颜色说明</span>
-          <span class="lg-item"><i class="lg-dot gap-dot"></i>黄色 = <b>停机期间</b>消耗（软件没运行的那段，无法算到某一天）</span>
-          <span class="lg-item"><i class="lg-dot recharge-dot"></i>橙色「充值」 = 那天余额反而涨了（疑似充值），<b>当日消耗算不出来</b></span>
-          <span class="lg-item"><i class="lg-dot fcast-dot"></i>预计耗尽：<b>红</b> &lt; 3 天 · <b>黄</b> &lt; 14 天 · <b>绿</b> 余量充足</span>
         </div>
 
         <div class="charts">
@@ -426,7 +419,7 @@ function exportCsv() {
 .charts { display: flex; flex-wrap: wrap; gap: var(--gap); margin-bottom: 20px; }
 .chart-card { flex: 1 1 300px; min-width: 280px; background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px 10px; box-shadow: var(--shadow-sm); }
 .chart-title .ct-total { color: var(--acc); font-weight: 700; margin-left: 6px; }
-.chart-title .ct-none { color: var(--warn); font-weight: 600; margin-left: 6px; }
+.chart-title .ct-none { color: var(--err); font-weight: 600; margin-left: 6px; }
 .chart-title { font-size: var(--fs-foot); color: var(--tx3); font-weight: 600; margin-bottom: 8px; }
 .bars2 { display: flex; align-items: flex-end; gap: 4px; height: 64px; padding: 2px 0 0; }
 .bar-col { flex: 1; display: flex; align-items: flex-end; justify-content: center; height: 100%; }
@@ -447,38 +440,29 @@ function exportCsv() {
 .usage-table tbody tr:hover td { background: var(--card-hover); }
 .usage-table td.dim { color: var(--tx3); }
 .usage-table td.today { font-weight: 700; color: var(--acc); }
-.usage-table td.recharge { color: var(--warn); font-weight: 600; font-size: 11.5px; }
-/* 充值日：黄色 + 下划虚线，和「停机期间」的纯黄色区分开（两种情况都是黄，但不是一回事） */
-.usage-table td.recharge { text-decoration: underline dotted var(--warn); text-underline-offset: 3px; }
+.usage-table td.recharge { color: var(--err); font-weight: 600; font-size: 11.5px; }
+/* 充值日：红色 + 下划虚线，和「停机期间」列的红色区分开（两种都是"这天算不出正常消耗"，但不是一回事） */
+.usage-table td.recharge { text-decoration: underline dotted var(--err); text-underline-offset: 3px; }
 .usage-table td.suggested { color: var(--tx2); }
 .usage-table td.num { font-variant-numeric: tabular-nums; }
 .usage-table td.strong { font-weight: 700; color: var(--tx); }
 .usage-table td.fcast { font-weight: 600; }
-.usage-table td.fcast.warn { color: var(--warn); }
+/* 预计耗尽：只在"快用完了"时标红，其余保持普通字色（不再出现黄色档位） */
 .usage-table td.fcast.danger { color: var(--err); }
-.usage-table td.fcast.ok { color: var(--ok); }
-/* 停机期间（软件未运行）消耗：单独标记，用警示色但弱化于错误色 */
-.usage-table td.gap, .dd-table td.gap { color: var(--warn); font-weight: 600; }
+/* 停机期间（软件未运行）消耗：只保留红色一种强调色（黄色太乱，已去掉） */
+.usage-table td.gap, .dd-table td.gap { color: var(--err); font-weight: 600; }
 .usage-table td.gap.dim { color: var(--tx3); font-weight: 400; }
 .dd-table td.gap.dim { color: var(--tx3); font-weight: 400; }
+/* 停机期间提示条：跟着表格一起改成红色系（原来那套黄色太乱，统一只用一种强调色） */
 .gap-note {
   display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
   margin: 0 0 12px; padding: 10px 14px;
-  background: var(--warn-soft, rgba(255, 176, 32, 0.12));
-  border: 1px solid var(--warn-line, rgba(255, 176, 32, 0.35));
+  background: var(--err-soft);
+  border: 1px solid var(--err-line);
   border-radius: 12px; font-size: var(--fs-foot); color: var(--tx2);
 }
 .gap-ico { font-size: 13px; }
-.gap-val { color: var(--warn); font-variant-numeric: tabular-nums; }
-/* 表格颜色说明（黄 = 停机期间 / 橙「充值」/ 预计耗尽档位），把颜色的语义写清楚 */
-.tbl-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; margin: 0 0 12px; font-size: var(--fs-foot); color: var(--tx3); }
-.tbl-legend .lg-title { font-weight: 600; color: var(--tx2); }
-.tbl-legend .lg-item { display: inline-flex; align-items: center; gap: 6px; }
-.tbl-legend .lg-item b { font-weight: 600; }
-.lg-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: none; }
-.lg-dot.gap-dot { background: var(--warn); }
-.lg-dot.recharge-dot { background: var(--warn); box-shadow: 0 0 0 2px var(--warn-soft, rgba(255, 176, 32, 0.18)); }
-.lg-dot.fcast-dot { background: var(--err); box-shadow: 0 0 0 2px var(--warn-soft, rgba(255, 176, 32, 0.18)); }
+.gap-val { color: var(--err); font-variant-numeric: tabular-nums; }
 .usage-table tfoot td { border-bottom: none; background: var(--acc-soft); }
 .acc-name { display: block; font-weight: 600; color: var(--tx); }
 .muted { color: var(--tx3); font-size: var(--fs-foot); }
