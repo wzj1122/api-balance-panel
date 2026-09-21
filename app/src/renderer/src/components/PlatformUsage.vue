@@ -3,14 +3,17 @@ import { computed, onMounted, ref } from 'vue'
 import type { PlatformUsageReport, Settings } from '@shared/types'
 import { PROVIDER_META } from '@shared/constants'
 import { fmtNumber, fmtMoney } from '@shared/format'
-import { creditsToCny, hasCreditRate, rateText, toCnyEstimate, unitKind } from '@shared/cost'
+import { creditCny, hasCreditRate, isCreditUnit, rateText } from '@shared/cost'
 import { listPlatformUsage } from '@renderer/api/ipc'
 import { downloadCsv, todayStamp } from '@renderer/utils/csv'
 
 /**
- * 「积分」和「元」是大数量级差异的两个单位：直接并排画对比条会得出"积分花得多得多"的错误印象。
- * 所以这里把每个单位都折算成人民币估算值，用同一把尺子排序 / 定宽，
- * 折算率来自「设置 → 成本折算」（默认按 DeepSeek 高峰价反推，见 shared/constants.ts）。
+ * 「折合人民币」只对**积分型**单位（商汤这类）显示。
+ *
+ * 用户要求（2026-09-22）：DeepSeek / 硅基流动 等平台本来就是元/美元记账，直接看数字就行，
+ * 不需要再折算一遍；只有积分和元放在一起对比时才是"没法比"的。所以：
+ * - 折算只有一个入口 `creditCny()`，非积分单位一律返回 null → 界面留空；
+ * - 以后新增积分型平台会自动走同一套逻辑，不用改界面。
  */
 const props = defineProps<{ settings: Settings | null }>()
 
@@ -22,7 +25,6 @@ const exporting = ref(false)
 
 /** 积分折算率（多少积分算 1 元）；0 / 缺省 = 不折算 */
 const creditsPerCny = computed(() => props.settings?.credits_per_cny ?? 0)
-const rateOn = computed(() => hasCreditRate(creditsPerCny.value))
 /** 折算率说明文案（设置页与页脚共用同一函数，口径不会写歪） */
 const rateLabel = computed(() => rateText(creditsPerCny.value))
 
@@ -57,12 +59,12 @@ function typeLabel(t: string): string {
   return m?.label ?? t
 }
 
-/** 某个数值折算成人民币估算值（单位是「元」直接返回原值；单位是「积分」按折算率；其它返回 null） */
+/** 折合人民币（估算）：**只有积分型单位**才有值，其它单位返回 null（界面显示空） */
 function toCny(value: number | null | undefined, unit: string): number | null {
-  return toCnyEstimate(value, unit, creditsPerCny.value)
+  return creditCny(value, unit, creditsPerCny.value)
 }
 
-/** 折算文案：'≈ 7.43 元'；算不出或数值为 0 返回空串（界面不显示多余的 ≈ 0.00 元） */
+/** 折算文案：'≈ 7.43 元'；非积分单位 / 算不出 / 为 0 一律返回空串（界面留空） */
 function cnyText(value: number | null | undefined, unit: string): string {
   const v = toCny(value, unit)
   if (v === null || v === 0) return ''
@@ -77,44 +79,43 @@ function unitDaySum(days: (number | null)[]): number | null {
 
 const totalByUnit = computed(() =>
   (report.value?.unitTotals ?? [])
-    .map((u) => ({
-      unit: u.unit,
-      total: u.days.filter((v): v is number => v !== null && v !== undefined && Number.isFinite(v)).reduce((a, b) => a + b, 0),
-      /** 同口径的人民币估算值（无法折算时 null） */
-      cny: toCnyEstimate(
-        u.days.filter((v): v is number => v !== null && v !== undefined && Number.isFinite(v)).reduce((a, b) => a + b, 0),
-        u.unit,
-        creditsPerCny.value
-      )
-    }))
+    .map((u) => {
+      const total = u.days.filter((v): v is number => v !== null && v !== undefined && Number.isFinite(v)).reduce((a, b) => a + b, 0)
+      return { unit: u.unit, total, cny: toCny(total, u.unit) }
+    })
     .filter((x) => x.total > 0)
-    .sort((a, b) => (b.cny ?? Number.NEGATIVE_INFINITY) - (a.cny ?? Number.NEGATIVE_INFINITY) || b.total - a.total)
+    .sort((a, b) => b.total - a.total)
 )
 
-/** 可折算部分的合计（把「积分」和「元」真正加到一起，给出唯一一个可比的总额） */
+/**
+ * 积分部分的合计（只有一个数、且只算积分型单位）。
+ * 只要报表里没有积分型单位，这个卡就整个不显示（用户要求：不要给元/美元再折算一遍）。
+ */
 const totalCny = computed(() => {
   const vals = totalByUnit.value.map((x) => x.cny).filter((v): v is number => v !== null && Number.isFinite(v))
   return vals.length > 0 ? vals.reduce((a, b) => a + b, 0) : null
 })
 
-/** 存在「积分」这类需要折算才可比的单位（决定是否提示折算率 / 是否可能折算失败） */
-const hasCreditUnit = computed(() => totalByUnit.value.some((x) => unitKind(x.unit) === 'credit'))
-/** 有单位没法折算（既不是元也不是积分，折算率也没开）——按原值排序，要如实说明 */
-const hasUnconvertible = computed(() => totalByUnit.value.some((x) => x.cny === null))
+/** 折合人民币卡只在"确实有积分型单位"时出现 */
+const showCnyCard = computed(() => totalByUnit.value.some((x) => isCreditUnit(x.unit)))
+/** 有积分型单位但没开折算率 → 提示去设置里填（否则不提示，免得打扰） */
+const creditRateMissing = computed(() => showCnyCard.value && !hasCreditRate(creditsPerCny.value))
 
 /**
- * 平台对比：按期人民币估算值排序 + 定宽。
- * 修复：以前 barPct 用「原值 / 最大值」，1 积分和 1 元被当成同一量级，积分条永远满格、
- * 金额条几乎看不见，等于没在比。
+ * 平台对比：积分型平台按折合人民币参与比较（否则百万积分和几块钱没法比），
+ * 其余单位之间本来就能直接比，按原值排。
  */
 const platformBars = computed(() => {
   const ps = report.value?.platforms ?? []
-  const rows = ps.map((p) => ({
-    p,
-    cny: toCny(p.total, p.unit),
-    /** 无折算率时退回原值，保证「同类单位之间」仍然可比（同单位内部数值量级一致） */
-    weigh: toCny(p.total, p.unit) ?? p.total ?? 0
-  }))
+  const rows = ps.map((p) => {
+    const cny = toCny(p.total, p.unit)
+    return {
+      p,
+      cny,
+      /** 权重：积分型用折合人民币，其它单位用原值（同类之间原值就是同一把尺子） */
+      weigh: cny ?? p.total ?? 0
+    }
+  })
   rows.sort((a, b) => b.weigh - a.weigh)
   const max = Math.max(0, ...rows.map((r) => r.weigh))
   return rows.map((r) => ({ ...r, pct: max > 0 ? Math.max(2, Math.round((r.weigh / max) * 100)) : 0 }))
@@ -133,7 +134,7 @@ function exportCsv() {
   const r = report.value
   if (!r || r.platforms.length === 0) return
   const rows: (string | number | null | undefined)[][] = []
-  rows.push(['平台', '类型', '单位', '今日', '7日均', '合计(含停机)', '折算人民币(估算)', '停机期间', '逐日合计', ...r.days.map((d) => d.label)])
+  rows.push(['平台', '类型', '单位', '今日', '7日均', '合计(含停机)', '折合人民币(仅积分)', '停机期间', '逐日合计', ...r.days.map((d) => d.label)])
   // 与界面同序（按折算值），导出的表也一眼看出谁更贵
   for (const { p } of platformBars.value) {
     rows.push([
@@ -199,14 +200,14 @@ function exportCsv() {
             </div>
             <div class="chip-value" v-else>暂无数据</div>
           </div>
-          <!-- 唯一一个「跨单位可比」的口径：把积分按折算率并到元上，才谈得上比较 -->
-          <div class="chip" v-if="totalCny !== null">
+          <!-- 只有存在积分型单位（商汤这类）时才显示：元/美元本来就能直接看，不再折算一遍 -->
+          <div class="chip" v-if="showCnyCard && totalCny !== null">
             <div class="chip-label">
-              折合人民币（估算）
-              <InfoTip :text="'按「设置 → 成本折算」的折算率换算：' + rateLabel + '。积分和元数量级差很多，不折算就没法比；折算值只是同尺子基线的估算，不代表真实扣费。'" />
+              积分折合人民币（估算）
+              <InfoTip :text="'只对积分型单位折算（商汤这类），元 / 美元单位不折算。折算率来自「设置 → 成本折算」：' + rateLabel + '。这是估算值，不代表真实扣费。'" />
             </div>
-            <div class="chip-value num accent">≈ {{ fmtMoney(totalCny) }}</div>
-            <div class="chip-sub" v-if="hasCreditUnit">积分按 {{ rateLabel }} 折算</div>
+            <div class="chip-value num">≈ {{ fmtMoney(totalCny) }}</div>
+            <div class="chip-sub">{{ rateLabel }}</div>
           </div>
           <div class="chip">
             <div class="chip-label">消耗最多平台（按折算值）</div>
@@ -228,17 +229,17 @@ function exportCsv() {
           </div>
         </div>
 
-        <!-- 换算口径必须写在界面上：否则用户不知道对比条是按什么排的 -->
-        <div class="rate-note" :class="{ off: !rateOn, bad: rateOn && hasUnconvertible }">
+        <!-- 折算口径说明：只在**确实有积分型单位**时才出现，元/美元单位不折算也就不提示 -->
+        <div v-if="showCnyCard" class="rate-note">
           <span class="rate-ico">⇄</span>
-          <template v-if="rateOn">
-            <span>对比条与「消耗最多平台」都已按<strong>折合人民币</strong>排序定宽（积分 : 元 = 原值不同量级，直接比会失真）。</span>
-            <b class="rate-val">{{ rateLabel }}</b>
-            <span class="muted">折算值仅为估算（默认按 DeepSeek 高峰价反推），可在「设置 → 成本折算」修改。</span>
+          <template v-if="creditRateMissing">
+            <span><strong>积分</strong>没有折算率：积分型平台不参与对比条定宽（按原值画），也不能和金额直接比。</span>
+            <span class="muted">去「设置 → 成本折算」填「多少积分算 1 元」即可启用。</span>
           </template>
           <template v-else>
-            <span>未启用积分折算，对比条按<strong>各单位原值</strong>画：积分与金额之间不可比，请分开看。</span>
-            <span class="muted">去「设置 → 成本折算」填「多少积分算 1 元」即可启用跨单位对比。</span>
+            <span><strong>积分</strong>按折合人民币参与对比（元 / 美元单位不折算，直接看数字）。</span>
+            <b class="rate-val">{{ rateLabel }}</b>
+            <span class="muted">折算值仅为估算，可在「设置 → 成本折算」修改。</span>
           </template>
         </div>
 
@@ -250,7 +251,7 @@ function exportCsv() {
         </div>
 
         <div class="bars-card">
-          <div class="bars-title">平台消耗对比（近 {{ range }} 天 · 按折合人民币排序）</div>
+          <div class="bars-title">平台消耗对比（近 {{ range }} 天）</div>
           <div class="bar-row" v-for="b in platformBars" :key="b.p.type + b.p.unit">
             <div class="bar-info">
               <span class="bar-name">{{ typeLabel(b.p.type) }}</span>
@@ -276,7 +277,7 @@ function exportCsv() {
                 <th>今日</th>
                 <th>7日均</th>
                 <th title="逐日之和 + 停机期间消耗（这段时间该平台总共掉了多少）">合计（含停机）</th>
-                <th title="按「设置 → 成本折算」的折算率换算成人民币，用于跨平台比较（估算值）">折合人民币</th>
+                <th title="只对积分型单位（商汤这类）按「设置 → 成本折算」的折算率估算；元 / 美元单位不折算，留空">折合人民币</th>
                 <th title="软件未运行期间的余额下降；已计入左侧合计">停机期间</th>
               </tr>
             </thead>
@@ -290,7 +291,7 @@ function exportCsv() {
                 <td class="num strong" :title="'逐日合计 ' + fmtNumber(p.totalDaily) + ' + 停机期间 ' + fmtNumber(p.gapTotal) + ' = ' + fmtNumber(p.total)">
                   {{ p.total === null ? '—' : fmtNumber(p.total) }}
                 </td>
-                <td class="num cny" :class="{ dim: !cnyText(p.total, p.unit) }">{{ cnyText(p.total, p.unit) || '—' }}</td>
+                <td class="num cny">{{ cnyText(p.total, p.unit) }}</td>
                 <td class="num gap" :class="{ dim: !p.gapTotal }">{{ p.gapTotal ? fmtNumber(p.gapTotal) : '—' }}</td>
               </tr>
             </tbody>
@@ -304,7 +305,7 @@ function exportCsv() {
                 <td class="num strong" :title="'逐日合计 ' + fmtNumber(u.totalDaily) + ' + 停机期间 ' + fmtNumber(u.gapTotal) + ' = ' + fmtNumber(u.totalAll)">
                   {{ u.totalAll === null ? '—' : fmtNumber(u.totalAll) }}
                 </td>
-                <td class="num strong cny" :class="{ dim: !cnyText(unitDaySum(u.days), u.unit) }">{{ cnyText(unitDaySum(u.days), u.unit) || '—' }}</td>
+                <td class="num strong cny">{{ cnyText(unitDaySum(u.days), u.unit) }}</td>
                 <td class="num strong gap">{{ u.gapTotal ? fmtNumber(u.gapTotal) : '—' }}</td>
               </tr>
             </tfoot>
@@ -313,10 +314,10 @@ function exportCsv() {
 
         <p v-if="report.note" class="note-line">{{ report.note }}</p>
         <p class="note-line">
-          「折合人民币」是把不同单位的消耗放到同一把尺子上的估算口径：
-          <template v-if="rateOn">{{ rateLabel }}（默认按 DeepSeek 高峰价反推；可在「设置 → 成本折算」修改）</template>
-          <template v-else>当前未启用折算，只有「元」类单位会直接显示金额</template>
-          。不同单位<strong>不能直接相加</strong>，积分和金额的数量级差很多，所以对比条按折算值排序定宽。
+          「折合人民币」<strong>只对积分型单位</strong>（商汤这类）折算；元 / 美元单位本身就是金额、直接看数字即可，所以那几行留空。
+          <template v-if="creditRateMissing">当前还没设积分折算率，去「设置 → 成本折算」填「多少积分算 1 元」即可。</template>
+          <template v-else>{{ rateLabel }}（默认按 DeepSeek 高峰价反推，可在「设置 → 成本折算」修改）。</template>
+          积分与金额<strong>不能直接相加</strong>，所以对比条里积分按折算值参与，其它单位按原值。
         </p>
       </template>
 

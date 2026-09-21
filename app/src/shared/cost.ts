@@ -1,9 +1,10 @@
 /**
  * 单位 → 金额折算（纯函数，两端共用；不得 import node: / electron）。
  *
- * 为什么需要它：账号可能用不同单位记账（如「积分」「CNY」「USD」），
- * **不同单位不能直接相加**，但界面上把它们并排画成「对比条」时，
- * 必须放到同一把尺子上，否则 100 万积分和 1 元会被当成同一量级的数字。
+ * **只对「积分」类单位折算**（用户 2026-09-22 明确要求）：
+ * DeepSeek / 硅基流动 / MiniMax / 智谱 / 阿里云这些都是直接用人民币或美元记账，
+ * 本身就能直接看，不需要再折算一遍；只有商汤这类「积分」型平台才需要把积分换成钱来对比。
+ * 以后新增积分型平台（或商汤的其它积分池）会自动走同一套逻辑，不用改界面。
  *
  * 折算率来自用户设置（credits_per_cny = 多少积分算 1 元），默认见
  * constants.ts 的 DEFAULT_CREDITS_PER_CNY（按 DeepSeek 高峰价反推的估算基线）。
@@ -13,20 +14,10 @@
 /** 「积分」类单位（平台额度积分）——只有这类单位才做「积分 → 元」折算（比较时统一小写） */
 const CREDIT_UNITS = ['积分', 'points', 'point', 'credit', 'credits']
 
-/** 「元」类单位：本身就是人民币，折算值 = 原值（比较时统一小写） */
-const CNY_UNITS = ['cny', 'rmb', '元', '¥', '￥']
-
-/** 「美元」类单位：折算成人民币还需要汇率，暂不折算（比较时统一小写） */
-const USD_UNITS = ['usd', '$', '美元']
-
-/** 单位归类：credit = 需要按积分折算；cny = 已经是人民币；other = 不认识（不折算） */
-export function unitKind(unit: string): 'credit' | 'cny' | 'other' {
+/** 单位是不是「积分」型（决定要不要显示折合人民币） */
+export function isCreditUnit(unit: string): boolean {
   const u = String(unit ?? '').trim().toLowerCase()
-  if (!u) return 'other'
-  if (CNY_UNITS.includes(u)) return 'cny'
-  if (USD_UNITS.includes(u)) return 'other'
-  if (CREDIT_UNITS.includes(u)) return 'credit'
-  return 'other'
+  return u.length > 0 && CREDIT_UNITS.includes(u)
 }
 
 /** 折算率是否可用（<=0 或非有限值 = 用户关掉了折算） */
@@ -34,7 +25,7 @@ export function hasCreditRate(creditsPerCny: number | null | undefined): boolean
   return typeof creditsPerCny === 'number' && Number.isFinite(creditsPerCny) && creditsPerCny > 0
 }
 
-/** 积分 → 元的估算值；折算率不可用或单位不认识时返回 null（调用方显示原值即可） */
+/** 积分 → 元的估算值；折算率不可用或值非法时返回 null（调用方不显示即可） */
 export function creditsToCny(value: number | null | undefined, creditsPerCny: number | null | undefined): number | null {
   if (value === null || value === undefined || !Number.isFinite(value)) return null
   if (!hasCreditRate(creditsPerCny)) return null
@@ -42,21 +33,18 @@ export function creditsToCny(value: number | null | undefined, creditsPerCny: nu
 }
 
 /**
- * 任意单位金额 → 人民币估算值，用于把不同单位放到同一把尺子（排序 / 对比条宽度）。
- * - 「元」类：原值
- * - 「积分」类：按折算率估算
- * - 其它 / 折算率不可用：null（调用方退回原值排序，不硬凑）
+ * 只有「积分」型单位才有的人民币估算值（其它单位一律返回 null）。
+ *
+ * 参数 unit 是必须的：即使将来某个单位名没见过，也不会被误当成积分去折算
+ * —— 宁可留空，也不要显示一个来路不明的金额。
  */
-export function toCnyEstimate(
+export function creditCny(
   value: number | null | undefined,
   unit: string,
   creditsPerCny: number | null | undefined
 ): number | null {
-  if (value === null || value === undefined || !Number.isFinite(value)) return null
-  const kind = unitKind(unit)
-  if (kind === 'cny') return value
-  if (kind === 'credit') return creditsToCny(value, creditsPerCny)
-  return null
+  if (!isCreditUnit(unit)) return null
+  return creditsToCny(value, creditsPerCny)
 }
 
 /** 折算率的中文说明（设置页与页脚共用，避免两处口径写歪） */

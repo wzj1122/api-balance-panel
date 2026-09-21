@@ -1,6 +1,6 @@
 {
   "name": "api-balance-panel",
-  "version": "1.3.3",
+  "version": "1.3.4",
   "private": true,
   "description": "API 余额监控面板：一个窗口看完所有 AI 平台与中转站的余额",
   "productName": "API 余额面板",
