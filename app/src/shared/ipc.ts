@@ -169,13 +169,14 @@ export interface PanelApi {
 
   /**
    * 新增校正：
-   * - mode='day'   ：把某天（accountId 账号）的用量改成 value（自动换算成该日期起平移多少）
-   * - mode='set'   ：从 fromTs 起把剩余设为 value
-   * - mode='offset'：从 fromTs 起整体平移 value
+   * - mode='dayBalance'：把某天的**余额**改正（只影响这一天，后面的数据不受影响）——推荐
+   * - mode='day'       ：把某天的用量改成 value（该日起整体平移，会一并影响之后日期）
+   * - mode='set'       ：从 fromTs 起把剩余设为 value
+   * - mode='offset'    ：从 fromTs 起整体平移 value
    */
   correctionApply(payload: {
     accountId: string
-    mode: 'day' | 'set' | 'offset'
+    mode: 'day' | 'dayBalance' | 'dayIgnore' | 'set' | 'offset'
     fromTs?: number
     dayTs?: number
     value: number

@@ -41,7 +41,20 @@ function setPeriod(p: ReportPeriod) {
 
 const hasData = computed(() => !!report.value && report.value.totalByUnit.length > 0)
 
-const total = computed(() => (report.value && report.value.totalByUnit.length > 0 ? report.value.totalByUnit[0].value : 0))
+/** 当前查看的单位（多单位时用顶部小标签切换，避免"数值大的单位盖掉另一个"） */
+const activeUnit = ref('')
+
+const units = computed(() => report.value?.totalByUnit ?? [])
+/** 当前单位的完整明细：平台构成 / 最多账号 / 时段分布 / 充值 都跟着它走 */
+const detail = computed(() => {
+  const list = report.value?.unitDetails ?? []
+  if (list.length === 0) return null
+  return list.find((u) => u.unit === activeUnit.value) ?? list[0]
+})
+
+/** 主数值 = 当前单位合计（修复：以前读错了字段，顶部大数字一直是 undefined） */
+const total = computed(() => detail.value?.total ?? 0)
+const unit = computed(() => detail.value?.unit ?? report.value?.unit ?? '')
 
 function typeLabel(t: string): string {
   const m = PROVIDER_META[t as keyof typeof PROVIDER_META]
@@ -49,14 +62,14 @@ function typeLabel(t: string): string {
 }
 
 const deltaText = computed(() => {
-  const d = report.value?.deltaPct
+  const d = detail.value?.deltaPct
   if (d === null || d === undefined) return null
   const up = d >= 0
   return { text: (up ? '↑ ' : '↓ ') + Math.abs(d).toFixed(0) + '%', up }
 })
 
 const peakHour = computed(() => {
-  const hours = report.value?.activeHours ?? []
+  const hours = detail.value?.activeHours ?? []
   let best: { hour: number; value: number } | null = null
   for (const h of hours) if (!best || h.value > best.value) best = h
   return best && best.value > 0 ? best.hour : null
@@ -64,18 +77,18 @@ const peakHour = computed(() => {
 
 /** 统计格单源：分享卡片（canvas）与页面 hero-grid 共用同一份数据，改口径只动这一处 */
 const statCells = computed<{ k: string; v: string }[]>(() => {
-  const r = report.value
-  if (!r) return []
+  const d = detail.value
+  if (!d) return []
   return [
-    { k: '活跃天数', v: r.activeDays + ' / ' + r.totalDays + ' 天' },
-    { k: '日均消耗', v: r.avgDaily === null ? '—' : fmtNumber(r.avgDaily) },
-    { k: '涉及平台', v: String(r.platformShare.length) + ' 个' },
+    { k: '活跃天数', v: d.activeDays + ' / ' + d.totalDays + ' 天' },
+    { k: '日均消耗', v: d.avgDaily === null ? '—' : fmtNumber(d.avgDaily) },
+    { k: '涉及平台', v: String(d.platformShare.length) + ' 个' },
     { k: '高峰时段', v: peakHour.value === null ? '—' : String(peakHour.value).padStart(2, '0') + ':00' }
   ]
 })
 
 const maxHour = computed(() => {
-  const hours = report.value?.activeHours ?? []
+  const hours = detail.value?.activeHours ?? []
   return Math.max(1, ...hours.map((h) => h.value))
 })
 
@@ -124,7 +137,14 @@ function makeCard() {
   ctx.fillText(fmtNumber(total.value), 60, 320)
   ctx.fillStyle = '#7f8ca3'
   ctx.font = '600 34px system-ui, "Microsoft YaHei", sans-serif'
-  ctx.fillText(r.unit || '', 66, 370)
+  ctx.fillText(unit.value || '', 66, 370)
+  // 多单位时把其它单位也印上，避免"只看到积分、以为 CNY 没算"
+  if (units.value.length > 1) {
+    ctx.fillStyle = '#7f8ca3'
+    ctx.font = '600 24px system-ui, "Microsoft YaHei", sans-serif'
+    const others = units.value.filter((u) => u.unit !== unit.value).map((u) => u.unit + ' ' + fmtNumber(u.value)).join('　·　')
+    ctx.fillText('其它单位：' + others, 66, 408)
+  }
   if (deltaText.value) {
     ctx.fillStyle = deltaText.value.up ? '#ff9d7a' : '#5ee0b0'
     ctx.font = '700 30px system-ui, "Microsoft YaHei", sans-serif'
@@ -148,8 +168,8 @@ function makeCard() {
   // 平台占比
   ctx.fillStyle = '#8fb4ff'
   ctx.font = '600 26px system-ui, "Microsoft YaHei", sans-serif'
-  ctx.fillText('消耗构成', 64, 780)
-  const shares = r.platformShare.slice(0, 4)
+  ctx.fillText('消耗构成 · ' + (unit.value || ''), 64, 780)
+  const shares = (detail.value?.platformShare ?? []).slice(0, 4)
   shares.forEach((s, i) => {
     const y = 824 + i * 64
     ctx.fillStyle = '#c9d4e6'
@@ -238,11 +258,26 @@ function fmtDate(d: Date): string {
         <div v-if="cardMsg" class="probe-msg">{{ cardMsg }}</div>
 
         <div class="hero-card">
-          <div class="hero-label">{{ report.title }} · {{ report.unit || '—' }}</div>
+          <div class="hero-label">{{ report.title }} · {{ unit || '—' }}</div>
           <div class="hero-value num">{{ fmtNumber(total) }}</div>
           <div class="hero-sub">
             <span v-if="deltaText" class="delta" :class="{ up: deltaText.up }">较上期 {{ deltaText.text }}</span>
             <span v-else class="muted">暂无上期对比数据</span>
+          </div>
+          <!-- 多单位：每个单位都给一个数字，避免"积分盖掉 CNY"；点标签切换下方明细 -->
+          <div v-if="units.length > 1" class="unit-strip">
+            <span class="us-label">各单位：</span>
+            <button
+              v-for="u in units"
+              :key="u.unit"
+              class="unit-chip"
+              :class="{ on: u.unit === unit }"
+              type="button"
+              @click="activeUnit = u.unit"
+            >
+              {{ u.unit }} <b class="num">{{ fmtNumber(u.value) }}</b>
+            </button>
+            <span class="muted small">（不同单位不能相加，点选可切换下方明细）</span>
           </div>
           <div class="hero-grid">
             <div v-for="c in statCells" :key="c.k" class="hg-item">
@@ -254,9 +289,9 @@ function fmtDate(d: Date): string {
 
         <div class="two-col">
           <div class="panel">
-            <div class="panel-title">消耗构成</div>
-            <div v-if="report.platformShare.length === 0" class="muted small">本期没有消耗记录</div>
-            <div v-for="s in report.platformShare" :key="s.type + s.unit" class="share-row">
+            <div class="panel-title">消耗构成 · {{ unit }}</div>
+            <div v-if="!detail || detail.platformShare.length === 0" class="muted small">本期没有消耗记录</div>
+            <div v-for="s in detail?.platformShare ?? []" :key="s.type" class="share-row">
               <span class="share-name">{{ typeLabel(s.type) }}</span>
               <span class="share-track"><span class="share-fill" :style="{ width: s.pct + '%' }"></span></span>
               <span class="share-num num">{{ fmtNumber(s.value) }}</span>
@@ -266,17 +301,21 @@ function fmtDate(d: Date): string {
 
           <div class="panel">
             <div class="panel-title">
-              时段分布
+              时段分布 · {{ unit }}
               <InfoTip text="把相邻两次快照之间的余额下降归到对应小时。刷新间隔越短越精确；默认 5 分钟刷新时可准确到小时级，30 分钟刷新只能粗略参考。" />
             </div>
             <div class="hours">
-              <div v-for="h in report.activeHours" :key="h.hour" class="hour-col" :title="String(h.hour).padStart(2, '0') + ':00 消耗 ' + fmtNumber(h.value)">
+              <div v-for="h in detail?.activeHours ?? []" :key="h.hour" class="hour-col" :title="String(h.hour).padStart(2, '0') + ':00 消耗 ' + fmtNumber(h.value)">
                 <div class="hour-bar" :style="{ height: Math.max(2, Math.round((h.value / maxHour) * 100)) + '%' }"></div>
                 <span class="hour-label" v-if="h.hour % 6 === 0">{{ h.hour }}</span>
                 <span class="hour-label" v-else></span>
               </div>
             </div>
             <div class="small muted">采样精度：约 {{ report.sampleMinutes }} 分钟/次</div>
+            <div v-if="detail?.topAccount" class="small muted">
+              消耗最多：{{ detail.topAccount.name }} {{ fmtNumber(detail.topAccount.value) }} {{ detail.unit }}
+              <template v-if="detail.topDay"> · 单日峰值 {{ detail.topDay.label }} {{ fmtNumber(detail.topDay.value) }}</template>
+            </div>
           </div>
         </div>
 
@@ -287,16 +326,16 @@ function fmtDate(d: Date): string {
           </ul>
         </div>
 
-        <div class="panel" v-if="report.recharges.length">
-          <div class="panel-title">疑似充值记录</div>
+        <div class="panel" v-if="(detail?.recharges?.length ?? 0) > 0">
+          <div class="panel-title">疑似充值记录 · {{ unit }}</div>
           <ul class="ms-list">
-            <li v-for="(rc, i) in report.recharges" :key="i">
+            <li v-for="(rc, i) in detail?.recharges ?? []" :key="i">
               {{ fmtClock(rc.ts) }} · {{ rc.name }} 增加 {{ fmtNumber(rc.amount) }} {{ rc.unit }}
             </li>
           </ul>
         </div>
 
-        <p class="note-line">报告全部基于本机余额快照计算，不含任何模型调用明细（平台接口不提供）。</p>
+        <p class="note-line">报告全部基于本机余额快照计算，不含任何模型调用明细（平台接口不提供）。不同单位的消耗分开统计、互不相加。</p>
       </template>
 
       <div v-else class="hint-box">还没有历史数据：让面板跑几轮刷新，积累一两天后报告就有内容了。</div>
@@ -318,6 +357,13 @@ function fmtDate(d: Date): string {
 .hero-label { font-size: 12px; color: var(--tx3); font-weight: 600; letter-spacing: 0.4px; }
 .hero-value { font-size: 46px; font-weight: 800; color: var(--tx-strong); line-height: 1.15; margin: 4px 0 2px; font-variant-numeric: tabular-nums; }
 .hero-sub { font-size: 12.5px; color: var(--tx3); }
+/* 多单位切换条：每个单位都给一个数字，避免"数值大的单位盖掉另一个" */
+.unit-strip { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.us-label { font-size: 12px; color: var(--tx3); }
+.unit-chip { background: var(--panel2); border: 1px solid var(--line); color: var(--tx2); border-radius: 999px; padding: 3px 12px; font-size: 12px; cursor: pointer; transition: border-color var(--dur) ease, color var(--dur) ease; }
+.unit-chip b { color: var(--tx-strong); margin-left: 4px; }
+.unit-chip.on { border-color: var(--acc); color: var(--acc); }
+.unit-chip.on b { color: var(--acc); }
 .delta { font-weight: 700; color: var(--ok); }
 .delta.up { color: var(--err); }
 .hero-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin-top: 18px; }

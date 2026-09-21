@@ -91,7 +91,7 @@ export async function safeInvoke<T = unknown>(
         break
       case IPC.CORRECTION_APPLY:
         res = await api.correctionApply(
-          payload as { accountId: string; mode: 'day' | 'set' | 'offset'; fromTs?: number; dayTs?: number; value: number; note?: string }
+          payload as { accountId: string; mode: 'day' | 'dayBalance' | 'dayIgnore' | 'set' | 'offset'; fromTs?: number; dayTs?: number; value: number; note?: string }
         )
         break
       case IPC.CORRECTION_REMOVE:
@@ -262,7 +262,7 @@ export async function correctionView(accountId: string, limit = 400): Promise<Rp
 /** 新增校正：改某天用量 / 平移 / 设为指定值 */
 export async function correctionApply(payload: {
   accountId: string
-  mode: 'day' | 'set' | 'offset'
+  mode: 'day' | 'dayBalance' | 'dayIgnore' | 'set' | 'offset'
   fromTs?: number
   dayTs?: number
   value: number

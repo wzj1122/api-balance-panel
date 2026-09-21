@@ -44,6 +44,8 @@ interface DayRow {
 }
 const dayRows = ref<DayRow[]>([])
 const savingDay = ref<number | null>(null)
+const savingDayOnly = ref<number | null>(null)
+const ignoringDay = ref<number | null>(null)
 
 /** 回退：选中的历史快照 + 目标余额输入 */
 const rollbackTs = ref<number | null>(null)
@@ -134,7 +136,7 @@ watch(() => props.initialAccountId, (id) => {
   }
 })
 
-/** ① 保存某天的新用量 */
+/** ① 保存某天的新用量（影响该日起的整体平移） */
 async function saveDay(row: DayRow): Promise<void> {
   const raw = row.input.trim()
   if (raw === '') return
@@ -148,6 +150,40 @@ async function saveDay(row: DayRow): Promise<void> {
     await load()
   } finally {
     savingDay.value = null
+  }
+}
+
+/**
+ * ①b 只改这一天（推荐）：把该天余额整体修正，让当天消耗变成目标值；
+ * 之后的日期完全不受影响（用于"某次刷新读到错的余额"这类瞬时异常）。
+ */
+async function saveDayOnly(row: DayRow): Promise<void> {
+  const raw = row.input.trim()
+  if (raw === '') return
+  const value = Number(raw)
+  if (!Number.isFinite(value) || value < 0) { fail('请输入不小于 0 的数字'); return }
+  savingDayOnly.value = row.ts
+  try {
+    const r = await correctionApply({ accountId: selectedId.value, mode: 'dayBalance', dayTs: row.ts, value })
+    if (!r.ok) { fail(r.error); return }
+    flash(r.data.message)
+    await load()
+  } finally {
+    savingDayOnly.value = null
+  }
+}
+
+/** ①c 忽略这天：把该天异常读数从统计里剔除（比"改成某个数字"更彻底） */
+async function ignoreDay(row: DayRow): Promise<void> {
+  if (!window.confirm('忽略 ' + row.label + ' 的数据？该天将不计入消耗统计（可在下方账本里撤销）。')) return
+  ignoringDay.value = row.ts
+  try {
+    const r = await correctionApply({ accountId: selectedId.value, mode: 'dayIgnore', dayTs: row.ts, value: 0 })
+    if (!r.ok) { fail(r.error); return }
+    flash(r.data.message)
+    await load()
+  } finally {
+    ignoringDay.value = null
   }
 }
 
@@ -263,8 +299,8 @@ const pointOptions = computed(() =>
         <!-- ① 改某天用量 -->
         <div class="sec-title">① 改某天用量</div>
         <p class="hint">
-          直接填该账号这一天的实际消耗，保存后「那天起整体平移」，账本里会留一条可撤销的记录。
-          这里比「每日使用状况」页方便：不受近 7/30 天窗口限制，也能看到每天的余额。
+          填该账号这一天的实际消耗（0 = 这天其实没花钱）。<b>推荐点「只改这天」</b>：只把这一天的余额修正到目标值，<b>后面的日期完全不受影响</b>
+          ——某次刷新因网络读到错的余额时用这个。右边「改这天起」会把该日之后的数据一起平移（少用）。
         </p>
         <div v-if="dayRows.length === 0" class="empty-box">该账号还没有历史快照，先让面板跑几轮刷新。</div>
         <table v-else class="tbl day-tbl">
@@ -274,7 +310,7 @@ const pointOptions = computed(() =>
               <th>当天消耗</th>
               <th>当天收盘余额</th>
               <th>改成</th>
-              <th></th>
+              <th>操作</th>
             </tr>
           </thead>
           <tbody>
@@ -285,9 +321,15 @@ const pointOptions = computed(() =>
               <td>
                 <input v-model="row.input" class="input mini" type="number" min="0" step="0.01" :placeholder="row.current === null ? '—' : String(row.current)" />
               </td>
-              <td>
-                <button class="btn tiny" type="button" :disabled="row.input.trim() === '' || savingDay === row.ts" @click="saveDay(row)">
-                  {{ savingDay === row.ts ? '保存中…' : '保存' }}
+              <td class="ops-cell">
+                <button class="btn tiny primary" type="button" :disabled="row.input.trim() === '' || savingDayOnly === row.ts" @click="saveDayOnly(row)">
+                  {{ savingDayOnly === row.ts ? '处理中…' : '只改这天' }}
+                </button>
+                <button class="btn tiny ghost" type="button" :disabled="ignoringDay === row.ts" @click="ignoreDay(row)">
+                  {{ ignoringDay === row.ts ? '处理中…' : '忽略这天' }}
+                </button>
+                <button class="btn tiny ghost" type="button" :disabled="row.input.trim() === '' || savingDay === row.ts" @click="saveDay(row)">
+                  {{ savingDay === row.ts ? '处理中…' : '改这天起' }}
                 </button>
               </td>
             </tr>
@@ -333,9 +375,12 @@ const pointOptions = computed(() =>
           </thead>
           <tbody>
             <tr v-for="c in viewData.corrections" :key="c.id">
-              <td class="tl">{{ new Date(c.fromTs).toLocaleString('zh-CN') }}</td>
-              <td>{{ c.kind === 'offset' ? '整体平移' : '设为指定值' }}</td>
-              <td class="num strong">{{ c.value > 0 ? '+' : '' }}{{ fmtNumber(c.value) }}</td>
+              <td class="tl">
+                {{ new Date(c.fromTs).toLocaleString('zh-CN') }}
+                <span v-if="c.toTs" class="muted">（仅当天）</span>
+              </td>
+              <td>{{ c.kind === 'offset' ? '整体平移' : c.kind === 'ignore' ? '忽略该段' : '设为指定值' }}</td>
+              <td class="num strong">{{ c.kind === 'ignore' ? '—' : (c.value > 0 ? '+' : '') + fmtNumber(c.value) }}</td>
               <td class="num muted">{{ viewData.affected[c.id] ?? 0 }} 条</td>
               <td class="tl note-cell">{{ c.note || '—' }}</td>
               <td><button class="btn ghost tiny danger" type="button" @click="undo(c.id)">撤销</button></td>
@@ -381,6 +426,9 @@ const pointOptions = computed(() =>
 .preview b { color: var(--tx-strong); }
 .preview b.warn { color: var(--warn); }
 .note-cell { max-width: 320px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ops-cell { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; }
+.btn.tiny.primary { background: var(--acc); color: var(--on-acc); border-color: transparent; }
+.btn.tiny.primary:disabled { opacity: 0.5; }
 .note-line { margin: 14px 0 var(--gap); font-size: var(--foot, 12px); color: var(--tx3); line-height: 1.8; }
 .note-line code { background: var(--panel2); border-radius: 4px; padding: 1px 5px; }
 .muted { color: var(--tx3); }

@@ -250,7 +250,7 @@ const api: PanelApi = {
   /** 数据校正：新增（改某天用量 / 平移 / 设为指定值） */
   correctionApply(payload: {
     accountId: string
-    mode: 'day' | 'set' | 'offset'
+    mode: 'day' | 'dayBalance' | 'dayIgnore' | 'set' | 'offset'
     fromTs?: number
     dayTs?: number
     value: number

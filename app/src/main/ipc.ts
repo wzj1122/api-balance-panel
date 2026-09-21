@@ -2,7 +2,7 @@ import { app, ipcMain, Notification, session, shell } from 'electron'
 import { MIMO_BALANCE_URL, SENSENOVA_TOKEN_KEY } from '../shared/constants'
 import { IPC } from '../shared/ipc'
 import type { RefreshPayload } from '../shared/ipc'
-import type { AccountInput, AppInfo, CorrectionView, CredentialSession, MonitorInput, ReportPeriod, Settings, LogLevel, KeyVaultInput } from '../shared/types'
+import type { AccountInput, AppInfo, Correction, CorrectionView, CredentialSession, MonitorInput, ReportPeriod, Settings, Snapshot, LogLevel, KeyVaultInput } from '../shared/types'
 import { applyAutoStart, getAutoStartStatus } from './autostart'
 import { backgroundData, backgroundForTheme, importBackground, listBackgrounds, removeBackground } from './bgstore'
 import { exportBackup, importBackup } from './backup'
@@ -19,9 +19,9 @@ import { invalidateCache, refresh, renewForAccount } from './query'
 import { jwtExpiry, supportsRenewal } from './renewal'
 import { closeWindow, isWindowMaximized, minimizeWindow, toggleMaximizeWindow } from './window'
 import { scheduler } from './scheduler'
-import { buildDailyUsage, buildPlatformUsage, buildUsageReport } from './usage'
+import { buildDailyUsage, buildPlatformUsage, buildUsageReport, dailyConsumedDetailed, daySlices, gapLimitMs, isUsageBased } from './usage'
 import { listByAccount, readSnapshotsRaw, removeByAccount } from './snapshot'
-import { addCorrection, applyCorrections, clearCorrections, listCorrections, removeCorrection } from './corrections'
+import { addCorrection, applyCorrections, clearCorrections, listCorrections, loadCorrections, removeCorrection } from './corrections'
 import { store, toView } from './store'
 
 /**
@@ -355,12 +355,161 @@ export function registerIpc(): void {
     if (!accountId) throw new Error('缺少账号 id')
     const account = store.getAccount(accountId)
     if (!account) throw new Error('账号不存在')
-    const mode = p.mode === 'day' || p.mode === 'set' ? p.mode : 'offset'
+    const mode =
+      p.mode === 'day' || p.mode === 'set' || p.mode === 'dayBalance' || p.mode === 'dayIgnore'
+        ? p.mode
+        : 'offset'
     const value = Number(p.value)
-    if (!Number.isFinite(value)) throw new Error('数值不合法')
+    if (mode !== 'dayIgnore' && !Number.isFinite(value)) throw new Error('数值不合法')
     const note = typeof p.note === 'string' ? p.note : ''
 
-    // 模式①：改某天的用量 → 换算成"从那天 00:00 起平移 delta"
+    /**
+     * 模式①c：忽略某天（把这段快照从统计里剔除）。
+     * 用途：那天读到明显错的值（例如瞬时闪断）。与其"改成一个数字"，不如整段剔除，
+     * 报表里那一天就是空的，不会污染消耗统计。
+     */
+    if (mode === 'dayIgnore') {
+      const dayTs = Number(p.dayTs)
+      if (!Number.isFinite(dayTs)) throw new Error('缺少日期')
+      const d0 = new Date(dayTs)
+      d0.setHours(0, 0, 0, 0)
+      const dayStart = d0.getTime()
+      const dayEnd = dayStart + 24 * 60 * 60 * 1000
+      const dayLabel = new Date(dayStart).toLocaleDateString('zh-CN')
+      const item = addCorrection({
+        accountId,
+        fromTs: dayStart,
+        toTs: dayEnd,
+        kind: 'ignore',
+        value: 0,
+        unit: account.unit ?? '',
+        note: note || `忽略 ${dayLabel} 的异常读数`
+      })
+      invalidateCache(accountId)
+      return {
+        ok: true,
+        correctionId: item.id,
+        offset: 0,
+        message: `已忽略 ${dayLabel} 的数据：该天不计入消耗统计（可随时撤销）`
+      }
+    }
+
+    /**
+     * 模式①b：改某天的**余额**（只改这一天）。
+     *
+     * 用途：某次刷新因网络原因读到错的余额，导致那天被算出一大笔"消耗"。
+     *
+     * 锚点很关键：平移起点取**当天第一条快照的时间**，而不是当天 00:00。
+     * 原因：相邻快照的差值决定消耗，起点落在"前一天最后一条 → 当天第一条"之间时，
+     * 会把跨零点那一小段的消耗也一起改掉（实测偏差 1 左右）。锚在当天第一条上，
+     * 就只改"这一天内部"的数据，前后两天的消耗都不受影响。
+     */
+    if (mode === 'dayBalance') {
+      const dayTs = Number(p.dayTs)
+      if (!Number.isFinite(dayTs)) throw new Error('缺少日期')
+      const d0 = new Date(dayTs)
+      d0.setHours(0, 0, 0, 0)
+      const dayStart = d0.getTime()
+      const dayEnd = dayStart + 24 * 60 * 60 * 1000
+      const raw = (await readSnapshotsRaw()).filter((s) => s.account_id === accountId).sort((a, b) => a.ts - b.ts)
+      const corrected = applyCorrections(raw, accountId)
+      const dayList = corrected.filter((s) => s.ts >= dayStart && s.ts < dayEnd && s.remaining !== null)
+      if (dayList.length === 0) throw new Error('这一天没有该账号的快照，无法修改')
+      const fromTs = dayList[0].ts
+
+      /**
+       * 自校准求偏移量（关键）：
+       * 直接按"余额差"反推会与界面显示口径差一点点（跨零点那一小段归属不同，实测差 1）。
+       * 这里改成：① 用**界面同款的账目函数 + 同样宽的窗口**（目标日前后各 5 天）测出这一天当前显示的消耗；
+       *          ② delta = 当前值 − 目标值（平移 delta 后该天消耗正好变化 −delta）。
+       * 用宽窗口很重要：闪断识别是"看当天上下文"的，只传一天会得出不同的结果。
+       */
+      const gapMs = gapLimitMs()
+      const hasUsed = isUsageBased(corrected)
+      const dayLabel = new Date(dayStart).toLocaleDateString('zh-CN')
+
+      /**
+       * 校准窗口必须与界面一致：每日使用状况用的是"近 30 天（以今天结尾）"的切片。
+       * 闪断识别是看当天上下文的，窗口不同 → 同一天算出来的值不同（实测差 1~3）。
+       */
+      const sliceCache = new WeakMap<object, { start: number; end: number; label: string }[]>()
+      const calSlices = (list: Snapshot[]): { start: number; end: number; label: string }[] => {
+        const cached = sliceCache.get(list as unknown as object)
+        if (cached) return cached
+        const built = daySlices(30).map((x) => ({ start: x.start, end: x.end, label: x.label }))
+        sliceCache.set(list as unknown as object, built)
+        return built
+      }
+      /** 在"应用了 candidate 偏移"之后，这一天在界面上会显示多少消耗 */
+      const measureWith = (candidate: number): number => {
+        const own = loadCorrections().filter((c) => c.accountId === accountId)
+        const list =
+          candidate === 0
+            ? applyCorrections(raw, accountId, own)
+            : applyCorrections(raw, accountId, [
+                ...own,
+                {
+                  id: '__probe__',
+                  accountId,
+                  fromTs,
+                  toTs: dayEnd,
+                  kind: 'offset' as const,
+                  value: candidate,
+                  unit: '',
+                  note: '',
+                  createdAt: Date.now()
+                }
+              ])
+        const slices = calSlices(list)
+        const idx = slices.findIndex((x) => x.start === dayStart)
+        if (idx < 0) return 0
+        const v = dailyConsumedDetailed(list, slices, hasUsed, gapMs).values[idx]
+        return typeof v === 'number' ? v : 0
+      }
+
+      // 候选择优：先按"当前值 − 目标值"给个候选，再在其附近试几个倍数，
+      // 取「应用后该天显示值最接近目标」的那个（避免因闪断识别跳变而反复横跳）。
+      const current = measureWith(0)
+      const step0 = Math.round((current - value) * 1e6) / 1e6
+      let best = { delta: 0, measured: current }
+      if (Math.abs(step0) > 1e-6) {
+        for (const mul of [1, 1.5, 2, 2.5, 3, 3.5, 4, 0.5]) {
+          const candidate = Math.round(step0 * mul * 1e6) / 1e6
+          const measured = measureWith(candidate)
+          if (Math.abs(measured - value) < Math.abs(best.measured - value) - 1e-9) {
+            best = { delta: candidate, measured }
+          }
+          if (Math.abs(measured - value) < 1e-4) break
+        }
+      }
+      const delta = best.delta
+      if (Math.abs(delta) < 1e-6) {
+        return { ok: true, correctionId: '', offset: 0, message: '该天数据已经是这个值，无需修改' }
+      }
+      const exact = Math.abs(best.measured - value) < 1e-4
+      const appliedNote = exact
+        ? `当天消耗由 ${current} 改为 ${value}`
+        : `该天涉及"读数闪断"，无法精确落到 ${value}；已按最接近的方案调整（当前显示 ${best.measured}）`
+
+      const item = addCorrection({
+        accountId,
+        fromTs,
+        toTs: dayEnd,
+        kind: 'offset',
+        value: delta,
+        unit: account.unit ?? '',
+        note: note || `修正 ${dayLabel} 当日数据（整体调整 ${delta}，只影响这一天）`
+      })
+      invalidateCache(accountId)
+      return {
+        ok: true,
+        correctionId: item.id,
+        offset: delta,
+        message: `已修正 ${dayLabel}：${appliedNote}（只影响这一天，前后日期不受影响）`
+      }
+    }
+
+    // 模式①：改某天的用量 → 换算成"从那天 00:00 起平移 delta"（会一并影响之后的日期）
     if (mode === 'day') {
       const dayTs = Number(p.dayTs)
       if (!Number.isFinite(dayTs)) throw new Error('缺少日期')

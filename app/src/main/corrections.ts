@@ -47,13 +47,15 @@ function normalize(raw: unknown): Correction | null {
   if (!isPlainObject(raw)) return null
   const accountId = typeof raw.accountId === 'string' ? raw.accountId : ''
   const fromTs = numOrNull(raw.fromTs)
-  const kind = raw.kind === 'set' ? 'set' : 'offset'
-  const value = numOrNull(raw.value)
+  const kind = raw.kind === 'set' ? 'set' : raw.kind === 'ignore' ? 'ignore' : 'offset'
+  // ignore 不需要数值（统一记 0）
+  const value = kind === 'ignore' ? 0 : numOrNull(raw.value)
   if (!accountId || fromTs === null || value === null) return null
   return {
     id: typeof raw.id === 'string' && raw.id ? raw.id : randomUUID(),
     accountId,
     fromTs,
+    toTs: numOrNull(raw.toTs),
     kind,
     value,
     unit: typeof raw.unit === 'string' ? raw.unit : '',
@@ -95,7 +97,8 @@ function save(): void {
 }
 
 /**
- * 某账号在某时刻之后的「净平移量」（offset 累加；set 不参与平移）
+ * 某账号在某时刻的「净平移量」（offset 累加；set 不参与平移）。
+ * 只看在这个时刻**仍然生效**的校正：fromTs <= ts，且（无 toTs 或 ts < toTs）。
  * @param list 可选：指定账本（默认读全局账本；测试用）
  */
 export function offsetFor(accountId: string, ts: number, list?: Correction[]): number {
@@ -103,6 +106,7 @@ export function offsetFor(accountId: string, ts: number, list?: Correction[]): n
   for (const c of list ?? loadCorrections()) {
     if (c.accountId !== accountId) continue
     if (c.fromTs > ts) continue
+    if (typeof c.toTs === 'number' && ts >= c.toTs) continue
     if (c.kind === 'offset') sum += c.value
   }
   return Math.round(sum * 1e6) / 1e6
@@ -144,10 +148,18 @@ export function applyCorrections(snapshots: Snapshot[], accountId?: string, inje
     if (!arr) return s
     let offset = 0
     let setVal: number | null = null
+    let ignored = false
     for (const c of arr) {
-      if (c.fromTs > s.ts) break
+      if (c.fromTs > s.ts) continue
+      // 有结束时间且已超出 → 这条校正对当前快照不生效（"只改某一天"就靠它）
+      if (typeof c.toTs === 'number' && s.ts >= c.toTs) continue
       if (c.kind === 'offset') offset += c.value
-      else setVal = c.value
+      else if (c.kind === 'set') setVal = c.value
+      else ignored = true
+    }
+    // 被「忽略」的时间段：直接当作没有这条数据（统计时既不消耗也不参与差值）
+    if (ignored) {
+      return { ...s, remaining: null, used: null, total: null, items: [], adjusted: true }
     }
     if (offset === 0 && setVal === null) return s
     const shift = (v: number | null | undefined): number | null => {
@@ -182,6 +194,7 @@ export function addCorrection(input: CorrectionInput): Correction {
     id: randomUUID(),
     accountId: input.accountId,
     fromTs: input.fromTs,
+    toTs: typeof input.toTs === 'number' ? input.toTs : null,
     kind: input.kind,
     value: input.value,
     unit: input.unit ?? '',
@@ -191,8 +204,9 @@ export function addCorrection(input: CorrectionInput): Correction {
   cache?.push(item)
   save()
   logger.info(
-    `[correction] 新增校正：账号 ${item.accountId}，从 ${new Date(item.fromTs).toLocaleString('zh-CN')} 起 ` +
-      (item.kind === 'offset' ? `平移 ${item.value}` : `剩余设为 ${item.value}`) +
+    `[correction] 新增校正：账号 ${item.accountId}，从 ${new Date(item.fromTs).toLocaleString('zh-CN')} 起` +
+      (item.toTs ? ` 至 ${new Date(item.toTs).toLocaleString('zh-CN')}` : '（长期）') +
+      (item.kind === 'offset' ? ` 平移 ${item.value}` : ` 剩余设为 ${item.value}`) +
       (item.note ? `（${item.note}）` : '')
   )
   return item

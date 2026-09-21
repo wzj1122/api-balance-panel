@@ -24,7 +24,17 @@ export interface Correction {
   accountId: string
   /** 生效时间（毫秒）：此时间及之后的快照都受影响 */
   fromTs: number
-  kind: 'offset' | 'set'
+  /**
+   * 结束时间（毫秒，不含）；null/未设置 = 一直生效。
+   * 用于「只改某一天」：把平移限制在这一天的快照上，不去动后面的数据。
+   */
+  toTs?: number | null
+  /**
+   * offset：整体平移 value
+   * set   ：把剩余设为 value
+   * ignore：把这段时间的快照从统计里剔除（用于"读取闪断/明显错值"那段数据）
+   */
+  kind: 'offset' | 'set' | 'ignore'
   value: number
   unit: string
   /** 备注（改的原因，自己以后看得懂） */
@@ -36,7 +46,9 @@ export interface Correction {
 export interface CorrectionInput {
   accountId: string
   fromTs: number
-  kind: 'offset' | 'set'
+  /** 结束时间（可选）：只改这一段时间，之后的快照不受影响 */
+  toTs?: number | null
+  kind: 'offset' | 'set' | 'ignore'
   value: number
   unit?: string
   note?: string
@@ -377,15 +389,55 @@ export interface Settings {
 
 export type ReportPeriod = 'day' | 'week' | 'month'
 
+/**
+ * 单个单位的完整明细。
+ *
+ * 背景：账号可能用不同单位（如 CNY 余额 + 积分），**不同单位不能相加**，
+ * 所以报告里每个单位都各自算一套（总量、环比、平台构成、时段分布…），
+ * 避免"数值大的单位把另一个单位盖掉"。
+ */
+export interface UsageReportUnit {
+  unit: string
+  /** 该单位本期合计 */
+  total: number
+  /** 上一等长周期同单位合计（无数据为 null） */
+  prevTotal: number | null
+  /** 环比百分比（正 = 比上期多花） */
+  deltaPct: number | null
+  /** 平台构成（该单位内，按金额倒序） */
+  platformShare: { type: string; value: number; pct: number }[]
+  /** 该单位内消耗最多的账号 */
+  topAccount: { name: string; value: number; unit: string } | null
+  /** 该单位内消耗最多的一天 */
+  topDay: { label: string; value: number; unit: string } | null
+  /** 该单位 24 小时分布 */
+  activeHours: { hour: number; value: number }[]
+  /** 该单位内的疑似充值记录 */
+  recharges: { ts: number; name: string; amount: number; unit: string }[]
+  /** 该单位内的活跃天数 / 统计天数 */
+  activeDays: number
+  totalDays: number
+  /** 该单位日均 */
+  avgDaily: number | null
+}
+
 export interface UsageReport {
   period: ReportPeriod
   title: string
   fromTs: number
   toTs: number
-  /** 主单位（合计最大的单位） */
+  /** 主单位（合计最大的那个单位；仅用于顶部主数值，明细见 unitDetails） */
   unit: string
+  /** 主单位本期合计（顶部大数字用）；0 = 无数据 */
+  total: number
+  /** 各单位合计（按金额倒序） */
   totalByUnit: { unit: string; value: number }[]
-  /** 各平台占比（同一单位内） */
+  /**
+   * 各单位的完整明细（**报表的所有明细区块都按单位切换显示**）。
+   * 修复：以前只显示主单位，导致"积分"盖掉"CNY"，余额账号在报告里完全看不到。
+   */
+  unitDetails: UsageReportUnit[]
+  /** 各平台占比（主单位内，兼容旧字段） */
   platformShare: { type: string; unit: string; value: number; pct: number }[]
   topAccount: { name: string; value: number; unit: string } | null
   topDay: { label: string; value: number; unit: string } | null

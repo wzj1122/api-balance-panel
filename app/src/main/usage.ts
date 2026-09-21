@@ -6,7 +6,8 @@ import type {
   PlatformUsageRow,
   ReportPeriod,
   Snapshot,
-  UsageReport
+  UsageReport,
+  UsageReportUnit
 } from '../shared/types'
 import { fmtNumber } from '../shared/format'
 import { PROVIDER_META } from '../shared/constants'
@@ -33,7 +34,7 @@ interface DaySlice {
   label: string
 }
 
-function daySlices(days: number): DaySlice[] {
+export function daySlices(days: number): DaySlice[] {
   const out: DaySlice[] = []
   const now = Date.now()
   for (let i = days - 1; i >= 0; i--) {
@@ -73,6 +74,34 @@ function refSnapshot(list: Snapshot[], beforeTs: number): { ts: number; remainin
 }
 
 /**
+ * 判断账号是否真的是「用量型」（用 used 累计值算消耗）。
+ *
+ * 判定标准（实测踩过的坑）：
+ * - 阿里云账号的 `used` 有值但**长期恒定**（92.03 不动），若据此算消耗 → 当天消耗恒为 0，
+ *   真实的余额下降（例如代金券掉的 207.97）被完全忽略；
+ * - 真正的用量型（如小米 MiMo 套餐）是**余额基本不动、used 一路增长**。
+ *
+ * 所以：只有「余额几乎不变 且 used 明显在增长」才按用量型处理，其余一律按余额（remaining）算。
+ */
+export function isUsageBased(list: Snapshot[]): boolean {
+  const rem = list.map((s) => s.remaining).filter((v): v is number => v !== null && v !== undefined && Number.isFinite(v))
+  const used = list.map((s) => s.used).filter((v): v is number => v !== null && v !== undefined && Number.isFinite(v))
+  if (used.length < 2) return false
+  const span = (arr: number[]): number => (arr.length < 2 ? 0 : Math.max(...arr) - Math.min(...arr))
+  const relSpan = (arr: number[]): number => {
+    if (arr.length < 2) return 0
+    const mx = Math.max(...arr)
+    const mn = Math.min(...arr)
+    return (mx - mn) / Math.max(Math.abs(mx), Math.abs(mn), 1)
+  }
+  const usedGrows = used[used.length - 1] > used[0]
+  const remSpan = span(rem)
+  const remRel = relSpan(rem)
+  // 用量型：余额基本不动（相对波动 < 1%）+ used 明显增长（相对 > 1%）
+  return remRel < 0.01 && usedGrows && relSpan(used) > 0.01
+}
+
+/**
  * 跨期（停机）判定：**不能**用「刷新间隔 × 3」当阈值 —— 那会把"跨零点那次刷新"也算成停机。
  * 例如刷新间隔 5 分钟、最后一条在 23:57、次日第一条在 00:02，间隔也才 5 分钟；但若最后一条在
  * 23:30、次日第一条在 00:30，间隔 1 小时就会被误判 → 当天消耗被整段剥离，报表数字直接失真。
@@ -82,7 +111,7 @@ function refSnapshot(list: Snapshot[], beforeTs: number): { ts: number; remainin
  * - 动态下限 **刷新间隔 × 3**（刷新间隔调大时同步放宽，例如 30 分钟刷新 → 90 分钟）。
  * 真正的停机（关软件几小时/几天）间隔远大于这个值，仍能被正确识别。
  */
-function gapLimitMs(): number {
+export function gapLimitMs(): number {
   const seconds = store.getSettings().refresh_seconds || 300
   return Math.max(2 * 60 * 60 * 1000, seconds * 3 * 1000)
 }
@@ -110,7 +139,7 @@ function round4(v: number): number {
   return Math.round(v * 10000) / 10000
 }
 
-function dailyConsumedDetailed(
+export function dailyConsumedDetailed(
   list: Snapshot[],
   slices: DaySlice[],
   hasUsed: boolean,
@@ -163,13 +192,40 @@ function dailyConsumedDetailed(
       useRefAsBase = false // 跨期段不计入当天消耗
     }
     const refVal = useRefAsBase && ref ? ref.remaining : null
+    const dayList = inDay.filter((s) => s.remaining !== null && s.remaining !== undefined && Number.isFinite(s.remaining))
     let prev: number | null = null
     let consumed = 0
     let sawRecharge = false
     let hasValue = false
-    for (const s of inDay) {
-      const cur = s.remaining
-      if (cur === null || cur === undefined || !Number.isFinite(cur)) continue
+    /**
+     * 先把「读取闪断」找出来再累加。
+     *
+     * 实测场景（阿里云 9/16 17:50）：读到 7.78，5 分钟后同一账号又回到 215.75 —— 这是**瞬时错误读数**，
+     * 不是真的消耗。旧口径会把它累加成 207.97 的消耗（报告里那个虚高数字就是这么来的）。
+     *
+     * 判定：某一跳的下降幅度 ≥ 当日余额波动的一半，且几分钟内又回升到接近跳前水平 ⇒ 视为闪断，
+     * 该跳不计入消耗（回升那一跳本来也不计）。真实消耗（跌了不回来）不受影响。
+     */
+    const dayVals = dayList.map((s) => s.remaining as number)
+    const daySpan = dayVals.length > 0 ? Math.max(...dayVals) - Math.min(...dayVals) : 0
+    const glitchIdx = new Set<number>()
+    for (let i = 1; i < dayList.length; i++) {
+      const a = dayList[i - 1].remaining as number
+      const b = dayList[i].remaining as number
+      const fall = a - b
+      if (!(fall > 0)) continue
+      if (daySpan > 0 && fall < daySpan * 0.5) continue
+      // 往后 12 条内是否回升到接近跳前
+      let recovered = false
+      for (let k = i + 1; k < Math.min(dayList.length, i + 12); k++) {
+        if ((dayList[k].remaining as number) >= a - Math.max(0.01, Math.abs(a) * 0.002)) { recovered = true; break }
+      }
+      if (recovered) glitchIdx.add(i)
+    }
+
+    for (let i = 0; i < dayList.length; i++) {
+      const s = dayList[i]
+      const cur = s.remaining as number
       if (prev === null) {
         if (refVal === null || !Number.isFinite(refVal)) {
           // 没有可用基准（或跨期已剥离）：以当天第一条为起点
@@ -182,7 +238,7 @@ function dailyConsumedDetailed(
       hasValue = true
       if (cur > prev + 1e-9) {
         sawRecharge = true
-      } else {
+      } else if (!glitchIdx.has(i)) {
         consumed += prev - cur
       }
       prev = cur
@@ -193,6 +249,9 @@ function dailyConsumedDetailed(
     } else {
       values.push(Math.max(0, round4(consumed)))
       rechargeFlags.push(sawRecharge)
+    }
+    if (glitchIdx.size > 0 && process.env.DSH_USAGE_DIAG === '1') {
+      logger.info(`[usage-diag] ${list[0]?.account_id?.slice(0, 8)} 某日忽略 ${glitchIdx.size} 处读取闪断（波动 ${daySpan}）`)
     }
     gapDays.push(gap)
     if (gap !== null) gapTotal += gap
@@ -242,7 +301,7 @@ export async function buildDailyUsage(days: number = 30): Promise<DailyUsageRepo
     const type: AccountType = acc?.type ?? 'custom'
     const name = acc?.name ?? accountId
     const unit = latest.unit || ''
-    const hasUsed = list.some((s) => s.used !== null && s.used !== undefined && Number.isFinite(s.used))
+    const hasUsed = isUsageBased(list)
     const detail = dailyConsumedDetailed(list, slices, hasUsed, gapMs)
     const daysVals = detail.values
     const today = daysVals.length > 0 ? daysVals[daysVals.length - 1] : null
@@ -436,7 +495,7 @@ export async function buildPlatformUsage(days: number = 30): Promise<PlatformUsa
     if (acc && acc.deleted_at) continue
     const type: AccountType = acc?.type ?? 'custom'
     const unit = latest.unit || ''
-    const hasUsed = list.some((s) => s.used !== null && s.used !== undefined && Number.isFinite(s.used))
+    const hasUsed = isUsageBased(list)
     const detail = dailyConsumedDetailed(list, slices, hasUsed, gapMs)
     accRows.push({ type, unit, hasUsed, days: detail.values, gapDays: detail.gapDays, gapTotal: detail.gapTotal })
   }
@@ -612,16 +671,87 @@ function dayLabel(ts: number): string {
   return String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
 }
 
-/** 把窗口内的余额/用量差分归集到各维度；onlyHours 为 true 时只统计时段分布 */
-function collectFlows(
+/**
+ * 把任意时间范围切成逐日「切片」（不含跨期剥离，剥离在账目函数里做）。
+ * 与 daySlices 的区别：这里按**给定范围**切，用于报告窗口（含上一个等长周期）。
+ */
+function slicesBetween(fromTs: number, toTs: number): DaySlice[] {
+  const out: DaySlice[] = []
+  const first = new Date(fromTs)
+  first.setHours(0, 0, 0, 0)
+  for (let t = first.getTime(); t < toTs; t += DAY_MS) {
+    const dd = new Date(t)
+    const mm = String(dd.getMonth() + 1).padStart(2, '0')
+    const day = String(dd.getDate()).padStart(2, '0')
+    out.push({ start: t, end: t + DAY_MS, label: mm + '-' + day })
+  }
+  return out
+}
+
+/**
+ * 某账号在一段时间内的「逐日余额账目」——所有统计（每日使用状况 / 平台用量 / 使用报告）**共用这一份**。
+ *
+ * 为什么必须共用：以前使用报告用的是另一套「相邻快照差分」口径，两者结果不一致
+ * （实测：同一个月，报告算 303.22 CNY，日报只有 64.50 CNY，差 238）。
+ * 现在统一：跨期（>gapLimitMs）的下降归到「停机期间」，不堆到某一天；充值（余额上升）不计消耗。
+ */
+interface BalanceLedger {
+  /** 与 slices 对齐：当日消耗（跨期部分已剥离） */
+  values: (number | null)[]
+  /** 与 slices 对齐：当日停机期间消耗 */
+  gapDays: (number | null)[]
+  /** 与 slices 对齐：当日疑似充值 */
+  rechargeFlags: boolean[]
+  /** 与 slices 对齐：当日最后一次有效余额（用于图表基线） */
+  lastValues: (number | null)[]
+  gapTotal: number
+}
+
+/** 为某账号生成逐日账目（slices 需按时间升序，且同一天只有一条切片） */
+function balanceLedger(list: Snapshot[], slices: DaySlice[], hasUsed: boolean, gapMs: number): BalanceLedger {
+  const detail = dailyConsumedDetailed(list, slices, hasUsed, gapMs)
+  const lastValues: (number | null)[] = []
+  for (const sl of slices) {
+    const inDay = list.filter((s) => s.ts >= sl.start && s.ts < sl.end && s.remaining !== null && Number.isFinite(s.remaining))
+    lastValues.push(inDay.length > 0 ? (inDay[inDay.length - 1].remaining as number) : null)
+  }
+  return {
+    values: detail.values,
+    gapDays: detail.gapDays,
+    rechargeFlags: detail.rechargeFlags,
+    lastValues,
+    gapTotal: detail.gapTotal
+  }
+}
+
+/** 窗口内的消耗流水（统一来自逐日账目） */
+interface Flows {
+  byUnit: Map<string, number>
+  byPlatform: Map<string, number>
+  byAccount: Map<string, { name: string; unit: string; value: number }>
+  byDay: Map<string, number>
+  hours: Map<string, number[]>
+  recharges: { ts: number; name: string; amount: number; unit: string }[]
+  daysWithUse: Set<string>
+}
+
+
+/**
+ * 把「逐日账目」归集到各维度（单位 / 平台 / 账号 / 日期 / 时段 / 充值）。
+ *
+ * 与旧实现的区别（重要）：不再自己按"相邻快照差分"累加，而是直接用账目函数算好的逐日值，
+ * 因此与「每日使用状况」页数字**完全一致**；跨期下降不会被打到某一天，充值也不计入消耗。
+ *
+ * @param slices 窗口切片（须与 label 对齐的日期标签）
+ * @param withDetail 是否累计明细维度（false 时只算总量，用于"上一个周期"做环比）
+ */
+function collectFlowsFromLedger(
   okOnly: Snapshot[],
-  from: number,
-  to: number,
-  sampleMinutes: number,
+  slices: DaySlice[],
+  gapMs: number,
   flows: Flows,
   withDetail: boolean
 ): void {
-  const maxGapMs = Math.max(sampleMinutes, 1) * 3 * 60 * 1000
   const byAccount = new Map<string, Snapshot[]>()
   for (const s of okOnly) {
     const arr = byAccount.get(s.account_id)
@@ -634,54 +764,52 @@ function collectFlows(
     if (acc && acc.deleted_at) continue
     const type: AccountType = acc?.type ?? 'custom'
     const name = acc?.name ?? accountId
-    const hasUsed = list.some((s) => s.used !== null && s.used !== undefined && Number.isFinite(s.used))
-    for (let i = 1; i < list.length; i++) {
-      const prev = list[i - 1]
-      const cur = list[i]
-      if (cur.ts < from) continue
-      if (cur.ts >= to) break
-      if (prev.ts < from - 6 * 60 * 60 * 1000) continue
-      const unit = cur.unit || prev.unit || ''
-      if (!unit) continue
-      let delta: number | null = null
-      if (hasUsed) {
-        const a = prev.used
-        const b = cur.used
-        if (a !== null && a !== undefined && b !== null && b !== undefined && Number.isFinite(a) && Number.isFinite(b) && b > a) {
-          delta = b - a
-        }
-      } else {
-        const a = prev.remaining
-        const b = cur.remaining
-        if (a !== null && a !== undefined && b !== null && b !== undefined && Number.isFinite(a) && Number.isFinite(b)) {
-          const diff = a - b
-          if (diff > 0) delta = diff
-          else if (diff < 0 && withDetail && flows.recharges.length < 20) {
-            flows.recharges.push({ ts: cur.ts, name, amount: -diff, unit })
-          }
-        }
-      }
-      if (delta === null || !(delta > 0)) continue
-      const hourIdx = new Date(cur.ts).getHours()
+    const unit = list[list.length - 1]?.unit || list[0]?.unit || ''
+    if (!unit) continue
+    const hasUsed = isUsageBased(list)
+    const ledger = balanceLedger(list, slices, hasUsed, gapMs)
+
+    for (let i = 0; i < slices.length; i++) {
+      const day = slices[i].label
+      const v = ledger.values[i]
+      // 当天消耗 = 当日值 + 当日停机期间（合计口径包含停机区间）
+      const total = (v ?? 0) + (ledger.gapDays[i] ?? 0)
+      if (total <= 0) continue
+      flows.byUnit.set(unit, (flows.byUnit.get(unit) ?? 0) + total)
+      flows.byDay.set(day, (flows.byDay.get(day) ?? 0) + total)
+      flows.daysWithUse.add(day)
       if (withDetail) {
-        flows.byUnit.set(unit, (flows.byUnit.get(unit) ?? 0) + delta)
         const pk = type + '\u0000' + unit
-        flows.byPlatform.set(pk, (flows.byPlatform.get(pk) ?? 0) + delta)
+        flows.byPlatform.set(pk, (flows.byPlatform.get(pk) ?? 0) + total)
         const prevAcc = flows.byAccount.get(accountId)
-        flows.byAccount.set(accountId, { name, unit, value: (prevAcc?.value ?? 0) + delta })
-        const dl = dayLabel(cur.ts)
-        flows.byDay.set(dl, (flows.byDay.get(dl) ?? 0) + delta)
-        flows.daysWithUse.add(dl)
+        flows.byAccount.set(accountId, { name, unit, value: (prevAcc?.value ?? 0) + total })
+        // 时段分布：把当天消耗按"当天最后一条快照所在小时"归属（与旧口径一致，仅小时级近似）
+        const lastV = ledger.lastValues[i]
+        if (lastV !== null) {
+          const hourIdx = new Date(slices[i].end - 1).getHours()
+          const arr = flows.hours.get(unit) ?? new Array(24).fill(0)
+          // 摊到当天：用当天消耗累加到"当天最后采样点所在小时"，保持不变的口径
+          arr[hourIdx] += total
+          flows.hours.set(unit, arr)
+        }
       }
-      // 时段分布：只在采样间隔足够密时归属到小时，避免把整夜消耗塞进一个点
-      if (cur.ts - prev.ts <= maxGapMs) {
-        const arr = flows.hours.get(unit) ?? new Array(24).fill(0)
-        arr[hourIdx] += delta
-        flows.hours.set(unit, arr)
+    }
+
+    // 疑似充值：账目里标记了充值的日子（余额上升）
+    if (withDetail) {
+      for (let i = 0; i < slices.length; i++) {
+        if (!ledger.rechargeFlags[i]) continue
+        const prev = i > 0 ? ledger.lastValues[i - 1] : null
+        const cur = ledger.lastValues[i]
+        const amount = prev !== null && cur !== null ? Math.max(0, cur - prev) : 0
+        if (amount > 0 && flows.recharges.length < 20) {
+          flows.recharges.push({ ts: slices[i].start, name, amount: Math.round(amount * 10000) / 10000, unit })
+        }
       }
     }
   }
 }
+
 
 /** 趣味换算文案（只基于金额） */
 function buildMilestones(args: {
@@ -738,7 +866,9 @@ export async function buildUsageReport(period: ReportPeriod = 'day'): Promise<Us
     fromTs: win.from,
     toTs: win.to,
     unit: '',
+    total: 0,
     totalByUnit: [],
+    unitDetails: [],
     platformShare: [],
     topAccount: null,
     topDay: null,
@@ -763,45 +893,85 @@ export async function buildUsageReport(period: ReportPeriod = 'day'): Promise<Us
     return { ...empty, milestones: ['还没有历史数据：面板每次刷新都会记录快照，跑几轮后再来看报告'] }
   }
 
+  // 统一口径：与「每日使用状况」共用逐日账目（跨期下降归停机期间、充值不计消耗）
+  const gapMs = gapLimitMs()
+  const curSlices = slicesBetween(win.from, win.to)
+  const prevSlices = slicesBetween(win.from - span, win.from)
   const flows = emptyFlows()
-  collectFlows(okOnly, win.from, win.to, sampleMinutes, flows, true)
+  collectFlowsFromLedger(okOnly, curSlices, gapMs, flows, true)
   const prevFlows = emptyFlows()
-  collectFlows(okOnly, win.from - span, win.from, sampleMinutes, prevFlows, false)
+  collectFlowsFromLedger(okOnly, prevSlices, gapMs, prevFlows, false)
 
+  const round4v = (v: number): number => Math.round(v * 10000) / 10000
   const totalByUnit = Array.from(flows.byUnit.entries())
-    .map(([unit, value]) => ({ unit, value }))
+    .map(([unit, value]) => ({ unit, value: round4v(value) }))
     .sort((a, b) => b.value - a.value)
   const unit = totalByUnit.length > 0 ? totalByUnit[0].unit : ''
   const total = totalByUnit.length > 0 ? totalByUnit[0].value : 0
   const prevSame = unit ? prevFlows.byUnit.get(unit) ?? null : null
   const deltaPct = prevSame !== null && prevSame > 0 ? ((total - prevSame) / prevSame) * 100 : null
 
-  // 平台占比（主单位内）
-  const shareRaw: { type: string; unit: string; value: number }[] = []
-  for (const [pk, value] of flows.byPlatform) {
-    const [type, u] = pk.split('\u0000')
-    if (u !== unit) continue
-    shareRaw.push({ type, unit: u, value })
-  }
-  shareRaw.sort((a, b) => b.value - a.value)
-  const platformShare = shareRaw.map((x) => ({
-    ...x,
-    pct: total > 0 ? (x.value / total) * 100 : 0
-  }))
+  const totalDays = Math.max(1, Math.ceil(span / DAY_MS))
 
-  // 账号排行 / 单日峰值（主单位内）
-  let topAccount: UsageReport['topAccount'] = null
-  for (const [, v] of flows.byAccount) {
-    if (v.unit !== unit) continue
-    if (!topAccount || v.value > topAccount.value) topAccount = { name: v.name, value: v.value, unit: v.unit }
-  }
-  let topDay: UsageReport['topDay'] = null
-  for (const [label, value] of flows.byDay) {
-    if (!topDay || value > topDay.value) topDay = { label, value, unit }
-  }
+  /**
+   * 每个单位各算一套完整明细（关键修复）：不同单位不能相加，
+   * 以前只显示"数值最大的那个单位"，导致 CNY 余额账号在报告里完全看不到。
+   */
+  const unitDetails: UsageReportUnit[] = totalByUnit.map((u) => {
+    const uTotal = u.value
+    const share: { type: string; value: number; pct: number }[] = []
+    for (const [pk, value] of flows.byPlatform) {
+      const [type, uu] = pk.split('\u0000')
+      if (uu !== u.unit) continue
+      share.push({ type, value: round4v(value), pct: uTotal > 0 ? (value / uTotal) * 100 : 0 })
+    }
+    share.sort((a, b) => b.value - a.value)
+    let topAcc: UsageReportUnit['topAccount'] = null
+    for (const [, v] of flows.byAccount) {
+      if (v.unit !== u.unit) continue
+      if (!topAcc || v.value > topAcc.value) topAcc = { name: v.name, value: round4v(v.value), unit: v.unit }
+    }
+    let topD: UsageReportUnit['topDay'] = null
+    for (const [label, value] of flows.byDay) {
+      if (value <= 0) continue
+      if (!topD || value > topD.value) topD = { label, value: round4v(value), unit: u.unit }
+    }
+    const hours = flows.hours.get(u.unit) ?? new Array(24).fill(0)
+    const activeDays = (() => {
+      // 该单位有消耗的天数（各账号当天值相加）
+      const perDay = new Map<string, number>()
+      for (const [pk, value] of flows.byPlatform) {
+        const [, uu] = pk.split('\u0000')
+        if (uu !== u.unit) continue
+        perDay.set(u.unit, (perDay.get(u.unit) ?? 0) + value)
+      }
+      let n = 0
+      for (const [, v] of flows.byDay) if (v > 0) n++
+      return n
+    })()
+    const unitRecharges = flows.recharges.filter((r) => r.unit === u.unit)
+    const prevU = prevFlows.byUnit.get(u.unit) ?? null
+    return {
+      unit: u.unit,
+      total: uTotal,
+      prevTotal: prevU,
+      deltaPct: prevU !== null && prevU > 0 ? ((uTotal - prevU) / prevU) * 100 : null,
+      platformShare: share,
+      topAccount: topAcc,
+      topDay: topD,
+      activeHours: hours.map((value, hour) => ({ hour, value: round4v(value) })),
+      recharges: unitRecharges,
+      activeDays,
+      totalDays,
+      avgDaily: uTotal > 0 ? round4v(uTotal / totalDays) : null
+    }
+  })
 
-  const hours = unit ? flows.hours.get(unit) ?? new Array(24).fill(0) : new Array(24).fill(0)
-  const activeHours = hours.map((value, hour) => ({ hour, value }))
+  const main = unitDetails[0] ?? null
+  const platformShare = (main?.platformShare ?? []).map((s) => ({ ...s, unit }))
+  const topAccount = main?.topAccount ?? null
+  const topDay = main?.topDay ?? null
+  const activeHours = main?.activeHours ?? []
   let peakHour: number | null = null
   let peakVal = 0
   for (const h of activeHours) {
@@ -809,11 +979,10 @@ export async function buildUsageReport(period: ReportPeriod = 'day'): Promise<Us
   }
   if (peakVal <= 0) peakHour = null
 
-  const activeDays = flows.daysWithUse.size
-  const totalDays = Math.max(1, Math.ceil(span / DAY_MS))
-  const avgDaily = total > 0 ? total / totalDays : null
+  const activeDays = main?.activeDays ?? 0
+  const avgDaily = main?.avgDaily ?? null
   let rechargeSum = 0
-  for (const r of flows.recharges) rechargeSum += r.amount
+  for (const r of main?.recharges ?? []) rechargeSum += r.amount
   const topPlatformType = platformShare.length > 0 ? platformShare[0].type : ''
   const topPlatformLabel = topPlatformType
     ? (PROVIDER_META as Record<string, { label?: string }>)[topPlatformType]?.label ?? topPlatformType
@@ -825,7 +994,9 @@ export async function buildUsageReport(period: ReportPeriod = 'day'): Promise<Us
     fromTs: win.from,
     toTs: win.to,
     unit,
+    total,
     totalByUnit,
+    unitDetails,
     platformShare,
     topAccount,
     topDay,
@@ -835,7 +1006,7 @@ export async function buildUsageReport(period: ReportPeriod = 'day'): Promise<Us
     activeDays,
     totalDays,
     avgDaily,
-    recharges: flows.recharges,
+    recharges: main?.recharges ?? [],
     milestones: buildMilestones({
       unit: unit || '—',
       total,
@@ -844,7 +1015,7 @@ export async function buildUsageReport(period: ReportPeriod = 'day'): Promise<Us
       activeDays,
       totalDays,
       peakHour,
-      rechargeCount: flows.recharges.length,
+      rechargeCount: main?.recharges.length ?? 0,
       rechargeSum,
       avgDaily
     }),
