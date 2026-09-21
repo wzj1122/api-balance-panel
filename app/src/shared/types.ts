@@ -511,8 +511,12 @@ export interface DailyAccount {
   rechargeFlags: boolean[]
   /** 与 days 对齐：该日被单独标记的「停机期间消耗」（软件未运行期间的余额下降），null = 无 */
   gapDays: (number | null)[]
-  /** 近 N 天「停机期间消耗」合计（不计入 days / 日均 / 耗尽预估 / 预算判断） */
+  /** 近 N 天「停机期间消耗」合计（已计入 totalAll；日均/耗尽预估仍不含它） */
   gapTotal: number
+  /** 近 N 天合计：逐日之和 + 停机期间消耗（该账号这段时间实际掉了多少） */
+  totalAll: number | null
+  /** 逐日部分的合计（不含停机期间），用于说明与对账 */
+  totalDaily: number | null
   /** 智能阈值建议（近 7 天日均 × 3；数据不足为 null） */
   suggestedThreshold: number | null
   /** 累计总额（进度条分母）：余额每上升一次就把增量累加进来，充值后自动进入新一轮 */
@@ -542,10 +546,12 @@ export interface PlatformUsageRow {
   /** 与报告 days 对齐的逐日消耗 */
   days: (number | null)[]
   today: number | null
-  /** 近 N 天合计（有值日之和） */
+  /** 近 N 天合计：逐日之和 + 停机期间消耗（口径 = 这段时间实际掉了多少钱） */
   total: number | null
+  /** 逐日部分的合计（不含停机期间），用于说明与对账 */
+  totalDaily?: number | null
   avg7: number | null
-  /** 近 N 天「停机期间消耗」合计（未计入 days / 合计 / 日均） */
+  /** 近 N 天「停机期间消耗」合计（已计入 total，这里单独列出便于说明） */
   gapTotal: number
 }
 
@@ -554,10 +560,15 @@ export interface UnitTotalRow {
   unit: string
   days: (number | null)[]
   today: number | null
+  /** 近 7 天逐日合计（不含停机期间） */
   total7: number | null
+  /** 近 N 天合计：逐日之和 + 停机期间消耗（合计口径，报表与界面「合计」用它） */
+  totalAll?: number | null
+  /** 逐日部分的合计（不含停机期间），用于说明与对账 */
+  totalDaily?: number | null
   /** 与 days 对齐：该日「停机期间消耗」合计，null = 无 */
   gapDays: (number | null)[]
-  /** 近 N 天「停机期间消耗」合计 */
+  /** 近 N 天「停机期间消耗」合计（已计入 totalAll） */
   gapTotal: number
 }
 

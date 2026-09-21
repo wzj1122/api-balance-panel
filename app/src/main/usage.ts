@@ -100,6 +100,11 @@ interface DailyDetail {
  *   这段下降不计入当天，改记入 gapDays —— 否则关几天再打开会把整段消耗堆到重启那天。
  * - gapDays/gapTotal：跨期（停机）消耗，单独标记，不参与日均、预估与预算判断。
  */
+/** 保留 4 位小数（统计口径统一用它，避免浮点毛刺） */
+function round4(v: number): number {
+  return Math.round(v * 10000) / 10000
+}
+
 function dailyConsumedDetailed(
   list: Snapshot[],
   slices: DaySlice[],
@@ -110,7 +115,6 @@ function dailyConsumedDetailed(
   const rechargeFlags: boolean[] = []
   const gapDays: (number | null)[] = []
   let gapTotal = 0
-  const round4 = (v: number): number => Math.round(v * 10000) / 10000
 
   for (const sl of slices) {
     const inDay = list.filter((s) => s.ts >= sl.start && s.ts < sl.end)
@@ -301,6 +305,15 @@ export async function buildDailyUsage(days: number = 30): Promise<DailyUsageRepo
       rechargeFlags: detail.rechargeFlags,
       gapDays: detail.gapDays,
       gapTotal: detail.gapTotal,
+      totalAll: (() => {
+        const vals = daysVals.filter((v): v is number => v !== null && Number.isFinite(v))
+        const daily = vals.length > 0 ? round4(vals.reduce((a, b) => a + b, 0)) : null
+        return daily === null && detail.gapTotal === 0 ? null : round4((daily ?? 0) + detail.gapTotal)
+      })(),
+      totalDaily: (() => {
+        const vals = daysVals.filter((v): v is number => v !== null && Number.isFinite(v))
+        return vals.length > 0 ? round4(vals.reduce((a, b) => a + b, 0)) : null
+      })(),
       suggestedThreshold: avg7 !== null && avg7 > 0 ? Math.round(avg7 * 3 * 100) / 100 : null,
       creditTotal,
       cycleStartTs,
@@ -316,13 +329,29 @@ export async function buildDailyUsage(days: number = 30): Promise<DailyUsageRepo
   // 按单位合计
   const unitMap = new Map<
     string,
-    { days: (number | null)[]; today: number | null; total7: number | null; gapDays: (number | null)[]; gapTotal: number }
+    {
+      days: (number | null)[]
+      today: number | null
+      total7: number | null
+      totalAll: number | null
+      totalDaily: number | null
+      gapDays: (number | null)[]
+      gapTotal: number
+    }
   >()
   for (const a of accounts) {
     if (!a.unit) continue
     let u = unitMap.get(a.unit)
     if (!u) {
-      u = { days: slices.map(() => null), today: null, total7: null, gapDays: slices.map(() => null), gapTotal: 0 }
+      u = {
+        days: slices.map(() => null),
+        today: null,
+        total7: null,
+        totalAll: null,
+        totalDaily: null,
+        gapDays: slices.map(() => null),
+        gapTotal: 0
+      }
       unitMap.set(a.unit, u)
     }
     u.days = u.days.map((prev, i) => (a.days[i] === null ? prev : (prev ?? 0) + (a.days[i] as number)))
@@ -333,14 +362,20 @@ export async function buildDailyUsage(days: number = 30): Promise<DailyUsageRepo
   for (const u of unitMap.values()) {
     const last7 = u.days.slice(-7).filter((v): v is number => v !== null && Number.isFinite(v))
     u.total7 = last7.length >= 2 ? last7.reduce((a, b) => a + b, 0) : null
+    // 合计口径：整段范围的逐日之和 + 停机期间消耗（= 这段时间总共掉了多少）
+    const all = u.days.filter((v): v is number => v !== null && Number.isFinite(v))
+    u.totalDaily = all.length > 0 ? round4(all.reduce((a, b) => a + b, 0)) : null
+    u.totalAll = u.totalDaily === null && u.gapTotal === 0 ? null : round4((u.totalDaily ?? 0) + u.gapTotal)
   }
   const unitTotals: DailyUsageReport['unitTotals'] = Array.from(unitMap.entries()).map(([unit, v]) => ({
     unit,
     days: v.days,
     today: v.today === 0 && v.today !== null && v.days.every((x) => x === null) ? null : v.today,
     total7: v.total7,
+    totalAll: v.totalAll,
+    totalDaily: v.totalDaily,
     gapDays: v.gapDays,
-    gapTotal: Math.round(v.gapTotal * 10000) / 10000
+    gapTotal: round4(v.gapTotal)
   }))
   unitTotals.sort((a, b) => (b.total7 ?? -1) - (a.total7 ?? -1) || a.unit.localeCompare(b.unit))
 
@@ -435,7 +470,10 @@ export async function buildPlatformUsage(days: number = 30): Promise<PlatformUsa
   for (const rec of platMap.values()) {
     rec.today = rec.days.length > 0 ? rec.days[rec.days.length - 1] : null
     const sum = rec.days.filter((v): v is number => v !== null && Number.isFinite(v)).reduce((a, b) => a + b, 0)
-    rec.total = sum > 0 ? sum : (rec.days.some((v) => v !== null) ? 0 : null)
+    const dailySum = rec.days.some((v) => v !== null) ? round4(sum) : null
+    // 合计口径：逐日之和 + 停机期间消耗（= 这段时间该平台总共掉了多少）
+    const total = dailySum === null && rec.gapTotal === 0 ? null : round4((dailySum ?? 0) + rec.gapTotal)
+    rec.total = total
     rec.avg7 = avgRecent(rec.days, 2)
     platforms.push({
       type: rec.type,
@@ -444,8 +482,9 @@ export async function buildPlatformUsage(days: number = 30): Promise<PlatformUsa
       days: rec.days,
       today: rec.today,
       total: rec.total,
+      totalDaily: dailySum,
       avg7: rec.avg7,
-      gapTotal: Math.round(rec.gapTotal * 10000) / 10000
+      gapTotal: round4(rec.gapTotal)
     })
   }
   platforms.sort((a, b) => (b.total ?? -1) - (a.total ?? -1) || a.type.localeCompare(b.type))
@@ -453,13 +492,29 @@ export async function buildPlatformUsage(days: number = 30): Promise<PlatformUsa
   // 按单位合计
   const unitMap = new Map<
     string,
-    { days: (number | null)[]; today: number | null; total7: number | null; gapDays: (number | null)[]; gapTotal: number }
+    {
+      days: (number | null)[]
+      today: number | null
+      total7: number | null
+      totalAll: number | null
+      totalDaily: number | null
+      gapDays: (number | null)[]
+      gapTotal: number
+    }
   >()
   for (const p of platforms) {
     if (!p.unit) continue
     let u = unitMap.get(p.unit)
     if (!u) {
-      u = { days: slices.map(() => null), today: null, total7: null, gapDays: slices.map(() => null), gapTotal: 0 }
+      u = {
+        days: slices.map(() => null),
+        today: null,
+        total7: null,
+        totalAll: null,
+        totalDaily: null,
+        gapDays: slices.map(() => null),
+        gapTotal: 0
+      }
       unitMap.set(p.unit, u)
     }
     u.days = u.days.map((prev, i) => (p.days[i] === null ? prev : (prev ?? 0) + (p.days[i] as number)))
@@ -469,14 +524,19 @@ export async function buildPlatformUsage(days: number = 30): Promise<PlatformUsa
   for (const u of unitMap.values()) {
     const last7 = u.days.slice(-7).filter((v): v is number => v !== null && Number.isFinite(v))
     u.total7 = last7.length >= 2 ? last7.reduce((a, b) => a + b, 0) : null
+    const all = u.days.filter((v): v is number => v !== null && Number.isFinite(v))
+    u.totalDaily = all.length > 0 ? round4(all.reduce((a, b) => a + b, 0)) : null
+    u.totalAll = u.totalDaily === null && u.gapTotal === 0 ? null : round4((u.totalDaily ?? 0) + u.gapTotal)
   }
   const unitTotals: PlatformUsageReport['unitTotals'] = Array.from(unitMap.entries()).map(([unit, v]) => ({
     unit,
     days: v.days,
     today: v.today === 0 && v.days.every((x) => x === null) ? null : v.today,
     total7: v.total7,
+    totalAll: v.totalAll,
+    totalDaily: v.totalDaily,
     gapDays: v.gapDays,
-    gapTotal: Math.round(v.gapTotal * 10000) / 10000
+    gapTotal: round4(v.gapTotal)
   }))
   unitTotals.sort((a, b) => (b.total7 ?? -1) - (a.total7 ?? -1) || a.unit.localeCompare(b.unit))
 

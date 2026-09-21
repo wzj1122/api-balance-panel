@@ -80,7 +80,7 @@ function exportCsv() {
   const r = report.value
   if (!r || r.platforms.length === 0) return
   const rows: (string | number | null | undefined)[][] = []
-  rows.push(['平台', '类型', '单位', '今日', '7日均', '合计', '停机期间', ...r.days.map((d) => d.label)])
+  rows.push(['平台', '类型', '单位', '今日', '7日均', '合计(含停机)', '停机期间', '逐日合计', ...r.days.map((d) => d.label)])
   for (const p of r.platforms) {
     rows.push([
       typeLabel(p.type),
@@ -90,12 +90,22 @@ function exportCsv() {
       p.avg7 === null || p.avg7 === undefined ? '' : p.avg7.toFixed(4),
       p.total ?? '',
       p.gapTotal ? p.gapTotal : '',
+      p.totalDaily ?? '',
       ...p.days.map((v) => (v === null || v === undefined ? '' : String(v)))
     ])
   }
   for (const u of r.unitTotals) {
-    const sum = u.days.reduce<number>((s, v) => s + (v ?? 0), 0)
-    rows.push(['合计（' + u.unit + '）', '', u.unit, u.today ?? '', u.total7 ?? '', sum || '', u.gapTotal || '', ...u.days.map((v) => (v === null || v === undefined ? '' : String(v)))])
+    rows.push([
+      '合计（' + u.unit + '）',
+      '',
+      u.unit,
+      u.today ?? '',
+      u.total7 ?? '',
+      u.totalAll ?? '',
+      u.gapTotal || '',
+      u.totalDaily ?? '',
+      ...u.days.map((v) => (v === null || v === undefined ? '' : String(v)))
+    ])
   }
   downloadCsv('平台用量-' + todayStamp() + '.csv', rows)
   exporting.value = true
@@ -181,8 +191,8 @@ function exportCsv() {
                 <th v-for="(d, i) in report.days" :key="d.ts" class="th-day" :class="{ faint: range === 30 && i % 5 !== 0 }">{{ d.label }}</th>
                 <th>今日</th>
                 <th>7日均</th>
-                <th>合计</th>
-                <th title="软件未运行期间的余额下降，不计入每日均值与合计">停机期间</th>
+                <th title="逐日之和 + 停机期间消耗（这段时间该平台总共掉了多少）">合计（含停机）</th>
+                <th title="软件未运行期间的余额下降；已计入左侧合计">停机期间</th>
               </tr>
             </thead>
             <tbody>
@@ -192,7 +202,9 @@ function exportCsv() {
                 <td v-for="(v, i) in p.days" :key="i" class="num" :class="{ dim: v === null }">{{ v === null ? '—' : fmtNumber(v) }}</td>
                 <td class="num today">{{ p.today === null ? '—' : fmtNumber(p.today) }}</td>
                 <td class="num">{{ p.avg7 === null ? '—' : fmtNumber(p.avg7) }}</td>
-                <td class="num strong">{{ p.total === null ? '—' : fmtNumber(p.total) }}</td>
+                <td class="num strong" :title="'逐日合计 ' + fmtNumber(p.totalDaily) + ' + 停机期间 ' + fmtNumber(p.gapTotal) + ' = ' + fmtNumber(p.total)">
+                  {{ p.total === null ? '—' : fmtNumber(p.total) }}
+                </td>
                 <td class="num gap" :class="{ dim: !p.gapTotal }">{{ p.gapTotal ? fmtNumber(p.gapTotal) : '—' }}</td>
               </tr>
             </tbody>
@@ -203,7 +215,9 @@ function exportCsv() {
                 <td v-for="(v, i) in u.days" :key="i" class="num strong">{{ v === null ? '—' : fmtNumber(v) }}</td>
                 <td class="num strong">{{ u.today === null ? '—' : fmtNumber(u.today) }}</td>
                 <td class="num strong">{{ u.total7 === null ? '—' : fmtNumber(u.total7) }}</td>
-                <td></td>
+                <td class="num strong" :title="'逐日合计 ' + fmtNumber(u.totalDaily) + ' + 停机期间 ' + fmtNumber(u.gapTotal) + ' = ' + fmtNumber(u.totalAll)">
+                  {{ u.totalAll === null ? '—' : fmtNumber(u.totalAll) }}
+                </td>
                 <td class="num strong gap">{{ u.gapTotal ? fmtNumber(u.gapTotal) : '—' }}</td>
               </tr>
             </tfoot>

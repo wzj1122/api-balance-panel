@@ -95,7 +95,13 @@ const monthBlocks = computed<CalMonth[]>(() => {
       cells.push({ ts, inRange: idx !== undefined, val, day, recharge, gap })
     }
     const valid = cells.filter((c) => c.val !== null && c.val !== undefined && Number.isFinite(c.val))
-    const total = valid.length ? valid.reduce((a, c) => a + (c.val as number), 0) : null
+    // 每月消耗合计 = 该月逐日之和 + 该月「停机期间」消耗（合计口径包含停机区间）
+    const monthDaily = valid.length ? valid.reduce((a, c) => a + (c.val as number), 0) : 0
+    const monthGap = cells.reduce((a, c) => a + (c.gap ?? 0), 0)
+    const total =
+      valid.length === 0 && monthGap === 0
+        ? null
+        : Math.round((monthDaily + monthGap) * 10000) / 10000
     let peak: CalCell | null = null
     for (const c of valid) if (!peak || (c.val as number) > (peak.val as number)) peak = c
     let peakAcc: { name: string; sum: number } | null = null
@@ -158,7 +164,7 @@ const monthBlocks = computed<CalMonth[]>(() => {
         </button>
       </div>
     </div>
-    <p class="cal-note">格子颜色越深表示当天消耗越多（按 {{ majorUnit || '主单位' }} 归一化）；点击有数据的天查看当日明细。余额型账号按「剩余变化」估算，充值会掩盖消耗。<br />带 <b class="gap-mark">⏸</b> 标记的日子表示检测到<strong>停机期间消耗</strong>（上次关闭软件到本次打开之间的余额下降）：这段消耗无法按天归属，因此不画进颜色深浅、也不计入日均与耗尽预估。</p>
+    <p class="cal-note">格子颜色越深表示当天消耗越多（按 {{ majorUnit || '主单位' }} 归一化）；点击有数据的天查看当日明细。余额型账号按「剩余变化」估算，充值会掩盖消耗。<br />带 <b class="gap-mark">⏸</b> 标记的日子表示检测到<strong>停机期间消耗</strong>（上次关闭软件到本次打开之间的余额下降）：无法按天归属，因此不画进颜色深浅，但<strong>已计入上方「每月消耗合计」与表格「合计（含停机）」</strong>，不计入日均与耗尽预估。</p>
   </div>
 </template>
 

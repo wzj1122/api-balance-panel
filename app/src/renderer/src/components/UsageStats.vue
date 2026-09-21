@@ -30,9 +30,15 @@ const selectedDay = computed(() => {
     value: a.days[idx],
     gap: a.gapDays?.[idx] ?? null
   }))
+  // 当日合计：该日逐日值 + 该日停机期间（合计里包含停机区间）
   const units = r.unitTotals
-    .map((u) => ({ unit: u.unit, value: u.days[idx], gap: u.gapDays?.[idx] ?? null }))
-    .filter((u) => u.value !== null && u.value !== undefined)
+    .map((u) => {
+      const v = u.days[idx]
+      const g = u.gapDays?.[idx] ?? null
+      const has = (v !== null && v !== undefined) || (g !== null && g !== undefined)
+      return { unit: u.unit, value: v, gap: g, total: has ? (v ?? 0) + (g ?? 0) : null }
+    })
+    .filter((u) => u.total !== null)
   const hasAny = rows.some((x) => x.value !== null && x.value !== undefined)
   const hasGap = rows.some((x) => x.gap !== null && x.gap !== undefined)
   const week = ['日', '一', '二', '三', '四', '五', '六'][dt.getDay()]
@@ -139,7 +145,7 @@ function exportCsv() {
   const r = report.value
   if (!r || r.accounts.length === 0) return
   const rows: (string | number | null | undefined)[][] = []
-  rows.push(['账号', '类型', '单位', '剩余', '今日', '7日均', '预计耗尽(天)', ...r.days.map((d) => d.label)])
+  rows.push(['账号', '类型', '单位', '剩余', '今日', '7日均', '合计(含停机)', '停机期间', '逐日合计', '预计耗尽(天)', ...r.days.map((d) => d.label)])
   for (const a of r.accounts) {
     rows.push([
       a.name,
@@ -148,12 +154,27 @@ function exportCsv() {
       a.remaining ?? '',
       a.today ?? '',
       a.avg7 === null || a.avg7 === undefined ? '' : a.avg7.toFixed(4),
+      a.totalAll ?? '',
+      a.gapTotal || '',
+      a.totalDaily ?? '',
       a.forecastDaysLeft === null || a.forecastDaysLeft === undefined ? '' : a.forecastDaysLeft.toFixed(1),
       ...a.days.map((v) => (v === null || v === undefined ? '' : String(v)))
     ])
   }
   for (const u of r.unitTotals) {
-    rows.push(['合计（' + u.unit + '）', '', u.unit, '', u.today ?? '', u.total7 ?? '', '', ...u.days.map((v) => (v === null || v === undefined ? '' : String(v)))])
+    rows.push([
+      '合计（' + u.unit + '）',
+      '',
+      u.unit,
+      '',
+      u.today ?? '',
+      u.total7 ?? '',
+      u.totalAll ?? '',
+      u.gapTotal || '',
+      u.totalDaily ?? '',
+      '',
+      ...u.days.map((v) => (v === null || v === undefined ? '' : String(v)))
+    ])
   }
   downloadCsv('每日使用-' + todayStamp() + '.csv', rows)
   exporting.value = true
@@ -212,7 +233,7 @@ function exportCsv() {
           <span class="gap-ico" title="软件未运行期间">⏸</span>
           <span>检测到<strong>停机期间消耗</strong>（软件未运行，无法按天归属）：</span>
           <b v-for="g in gapNotes" :key="g.unit" class="num gap-val">{{ fmtNumber(g.value) }} {{ g.unit }}</b>
-          <span class="muted">已单独标记，不计入每日均值、耗尽预估与预算判断。</span>
+          <span class="muted">已<strong>计入下方「合计（含停机）」</strong>，但不计入日均、耗尽预估与预算判断。</span>
         </div>
 
         <div class="charts">
@@ -245,8 +266,9 @@ function exportCsv() {
                 <th>剩余</th>
                 <th v-for="(d, i) in report.days" :key="d.ts">{{ d.label }}</th>
                 <th>今日</th>
-                <th>7日均</th>
-                <th title="软件未运行期间的余额下降，不计入均值与预估">停机期间</th>
+                <th title="近 7 天有效日的日均消耗（不含停机期间）">7日均</th>
+                <th title="软件未运行期间的余额下降；已计入下方「合计」，但不计入日均与耗尽预估">停机期间</th>
+                <th title="整段范围合计 = 逐日之和 + 停机期间消耗（这段时间实际掉了多少）">合计（含停机）</th>
                 <th>建议阈值</th>
                 <th>预计耗尽</th>
               </tr>
@@ -263,8 +285,11 @@ function exportCsv() {
                 </td>
                 <td class="num today">{{ a.today === null ? '—' : fmtNumber(a.today) }}</td>
                 <td class="num">{{ a.avg7 === null ? '—' : fmtNumber(a.avg7) }}</td>
-                <td class="num gap" :class="{ dim: !a.gapTotal }" :title="a.gapTotal ? '软件未运行期间的消耗，未计入均值与预估' : ''">
+                <td class="num gap" :class="{ dim: !a.gapTotal }" :title="a.gapTotal ? '软件未运行期间的消耗，已计入合计（但不计入日均与预估）' : ''">
                   {{ a.gapTotal ? fmtNumber(a.gapTotal) : '—' }}
+                </td>
+                <td class="num strong" :title="'逐日合计 ' + fmtNumber(a.totalDaily) + ' + 停机期间 ' + fmtNumber(a.gapTotal) + ' = ' + fmtNumber(a.totalAll)">
+                  {{ fmtNumber(a.totalAll) }}
                 </td>
                 <td class="num suggested">
                   {{ a.suggestedThreshold === null ? '—' : fmtNumber(a.suggestedThreshold) }}
@@ -279,7 +304,10 @@ function exportCsv() {
                 <td v-for="(v, i) in u.days" :key="i" class="num strong">{{ v === null ? '—' : fmtNumber(v) }}</td>
                 <td class="num strong">{{ u.today === null ? '—' : fmtNumber(u.today) }}</td>
                 <td class="num strong">{{ u.total7 === null ? '—' : fmtNumber(u.total7) }}</td>
-                <td class="num strong gap">{{ u.gapTotal ? fmtNumber(u.gapTotal) : '—' }}</td>
+                <td class="num strong gap" :title="u.gapTotal ? '已计入右侧「合计（含停机）」' : ''">{{ u.gapTotal ? fmtNumber(u.gapTotal) : '—' }}</td>
+                <td class="num strong" :title="'逐日合计 ' + fmtNumber(u.totalDaily) + ' + 停机期间 ' + fmtNumber(u.gapTotal) + ' = ' + fmtNumber(u.totalAll)">
+                  {{ u.totalAll === null ? '—' : fmtNumber(u.totalAll) }}
+                </td>
                 <td></td>
                 <td></td>
               </tr>
@@ -306,7 +334,7 @@ function exportCsv() {
         <div v-if="!selectedDay.hasAny && !selectedDay.hasGap" class="dd-empty">这一天没有用量记录</div>
         <table v-else class="dd-table">
           <thead>
-            <tr><th class="tl">账号</th><th>单位</th><th>用量</th><th title="软件未运行期间的余额下降，不计入当日用量">停机期间</th></tr>
+            <tr><th class="tl">账号</th><th>单位</th><th>用量</th><th title="软件未运行期间的余额下降；已计入合计">停机期间</th><th title="用量 + 停机期间">合计</th></tr>
           </thead>
           <tbody>
             <tr v-for="r in selectedDay.rows" :key="r.name">
@@ -314,19 +342,21 @@ function exportCsv() {
               <td class="muted">{{ r.unit || '—' }}</td>
               <td class="num">{{ r.value === null ? '—' : fmtNumber(r.value) }}</td>
               <td class="num gap" :class="{ dim: !r.gap }">{{ r.gap ? fmtNumber(r.gap) : '—' }}</td>
+              <td class="num strong">{{ fmtNumber((r.value ?? 0) + (r.gap ?? 0)) }}</td>
             </tr>
           </tbody>
           <tfoot v-if="selectedDay.units.length">
             <tr v-for="u in selectedDay.units" :key="u.unit">
               <td class="tl strong">合计（{{ u.unit }}）</td>
               <td></td>
-              <td class="num strong">{{ fmtNumber(u.value) }}</td>
+              <td class="num strong">{{ u.value === null ? '—' : fmtNumber(u.value) }}</td>
               <td class="num strong gap">{{ u.gap ? fmtNumber(u.gap) : '—' }}</td>
+              <td class="num strong">{{ fmtNumber(u.total) }}</td>
             </tr>
           </tfoot>
         </table>
         <p v-if="selectedDay.hasGap" class="dd-note">
-          该日的「停机期间」列是上次关闭软件到本次打开之间的余额下降，无法按天归属，因此不计入当日用量与日均。
+          该日的「停机期间」列是上次关闭软件到本次打开之间的余额下降，无法精确按天归属：它<strong>已计入当日合计</strong>，但不计入日均与耗尽预估。
         </p>
         <p class="dd-note">余额型账号按「剩余变化」估算，充值会掩盖消耗，仅供参考。</p>
       </div>
