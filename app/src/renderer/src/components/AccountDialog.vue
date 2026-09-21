@@ -181,7 +181,12 @@ async function doLogin() {
   loginBusy.value = false
   if (r.ok && r.data?.cookie) {
     form.secret = r.data.cookie
-    const renewHint = r.data.canRenew ? '（已保存续期材料，之后会自动延长登录有效期）' : ''
+    // renewHint 是主进程在登录当场用真实续期流程验出来的结论（不是"应该能续期"的猜测）
+    const renewHint = r.data.renewHint
+      ? '（' + r.data.renewHint + '）'
+      : r.data.canRenew
+        ? '（支持自动续期）'
+        : ''
     loginStatus.value = form.type === 'sensenova'
       ? '已获取登录态，保存后自动抓取额度' + renewHint
       : '已获取 Cookie，保存后自动抓取余额' + renewHint

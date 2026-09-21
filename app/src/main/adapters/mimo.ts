@@ -22,7 +22,10 @@ export const mimoAdapter: Adapter = async (account, ctx) => {
 
   // 现金余额：必须成功，否则整个账号算失败
   const r1 = await request(MIMO_BALANCE_URL, { headers })
-  if (r1.status === 401 || r1.status === 403) throw new AdapterError('COOKIE_EXPIRED', String(r1.status))
+  if (r1.status === 401 || r1.status === 403) {
+    // 说人话：以前这里只写 "401"，用户看不出"要去点登录"（自动续期失败时尤其重要）
+    throw new AdapterError('COOKIE_EXPIRED', '登录已失效（' + r1.status + '），请点「登录 MiMo」重新登录一次')
+  }
   if (r1.status !== 200) throw new AdapterError(mapHttpStatus(r1.status), r1.text.slice(0, 160))
 
   const d = (dig(safeJson(r1.text, MIMO_BALANCE_URL), 'data') as Record<string, unknown>) ?? {}

@@ -213,7 +213,10 @@ export function registerIpc(): void {
 
     /**
      * 保存后的复验：把凭据真的存进账号，再用适配器跑一次。
+     *
      * 只有真能查到数才算"登录成功"——避免出现"窗口关了、凭据存了、界面却一直等待登录"。
+     * （自动续期能力不在这里验：它由后台保活按自己的节奏跑，并在 renewal.ts 里如实校验与记录，
+     *   放在登录链路上只会让用户多等 6~10 秒。）
      */
     const accountId = typeof p.accountId === 'string' && p.accountId ? p.accountId : ''
     const verifyAfterSave: LoginOptions['verify'] = accountId
@@ -235,8 +238,10 @@ export function registerIpc(): void {
                 store.saveCredential(a.id, { secret: token, session })
               }
             })
-            if (row.ok) return null
-            return '账号查询失败（' + (row.errorCode ?? '未知') + '）：' + (row.errorDetail ?? row.note ?? '')
+            if (!row.ok) {
+              return '账号查询失败（' + (row.errorCode ?? '未知') + '）：' + (row.errorDetail ?? row.note ?? '')
+            }
+            return null
           } catch (e) {
             const err = e as { code?: string; detail?: string; message?: string }
             return '账号查询异常（' + (err.code ?? '未知') + '）：' + (err.detail ?? err.message ?? '')
@@ -258,6 +263,7 @@ export function registerIpc(): void {
     })
 
     // 登录成功就把新凭据 + 续期材料一起写进账号，之后由后台保活自动续期
+    let renewHint = ''
     if (result.ok && result.cookie && typeof p.accountId === 'string' && p.accountId) {
       const session = result.session ?? null
       const exp = jwtExpiry(result.cookie)
@@ -269,13 +275,18 @@ export function registerIpc(): void {
       logger.info(
         `[ipc] 账号 ${p.accountId} 已保存登录凭据（续期材料：${session ? session.cookies.split('; ').filter(Boolean).length + ' 个 Cookie' : '无'}；凭据有效至 ${exp ? new Date(exp).toLocaleString('zh-CN') : '未知'}）`
       )
+      // 走到这里说明 verifyAfterSave 里两步复验都过了（能查到数 + 自动续期可用）
+      if (supportsRenewal(store.getAccount(p.accountId)?.type ?? '')) {
+        renewHint = '自动续期已验证可用（登录窗口与后台保活共用同一分区）'
+      }
     }
     return {
       ok: result.ok,
       cookie: result.cookie,
       error: result.error,
       // 告诉界面：这个平台是否具备"自动续期"能力（用于提示文案）
-      canRenew: Boolean(rule?.cookieUrls)
+      canRenew: Boolean(rule?.cookieUrls),
+      renewHint
     }
   })
 

@@ -1,5 +1,5 @@
 import { BrowserWindow, session } from 'electron'
-import { LOGIN_RULES, SENSENOVA_POOL_USAGE_URL, loginPartition } from '../shared/constants'
+import { LOGIN_RULES, MIMO_BALANCE_URL, SENSENOVA_POOL_USAGE_URL, loginPartition } from '../shared/constants'
 import type { Account, CredentialSession } from '../shared/types'
 import { logger } from './logger'
 
@@ -34,6 +34,11 @@ export interface RenewalRecipe {
   tokenKey?: string
   /** 登录态校验：返回 null = 可用，否则返回原因 */
   validateToken?: (token: string) => Promise<string | null>
+  /**
+   * 无 tokenKey 平台（小米这类 Cookie 型）的**会话校验**：用分区里的 Cookie 真打一次业务接口，
+   * 返回 null = 这份会话确实可用。没有它就只能"瞎报成功"（这正是以前那个 bug）。
+   */
+  validateSession?: (cookie: string) => Promise<string | null>
 }
 
 /** 续期结果 */
@@ -77,7 +82,21 @@ export const SENSENOVA_RENEWAL: RenewalRecipe = {
 export const MIMO_RENEWAL: RenewalRecipe = {
   partition: loginPartition(LOGIN_RULES.mimo.partitionHost),
   pageUrl: 'https://platform.xiaomimimo.com/console/balance',
-  apiUrl: 'https://platform.xiaomimimo.com/api/v1/balance'
+  apiUrl: MIMO_BALANCE_URL,
+  // 会话真不真，用余额接口说话：能通才算续期成功（否则如实报失败，让上层提示重新登录）
+  validateSession: async (cookie) => {
+    try {
+      const r = await fetch(MIMO_BALANCE_URL, {
+        headers: { Cookie: cookie, Accept: 'application/json' },
+        signal: AbortSignal.timeout(10000)
+      })
+      if (r.status === 200) return null
+      if (r.status === 401 || r.status === 403) return '余额接口返回 ' + r.status
+      return '余额接口返回 ' + r.status
+    } catch (e) {
+      return '校验请求失败：' + (e as Error).message
+    }
+  }
 }
 
 /** 平台 → 续期配方（没有配方的平台不支持静默续期） */
@@ -227,14 +246,49 @@ export async function renewCredential(
       return { ok: false, error: '会话已失效，需要重新登录一次', session: { ts: Date.now(), cookies, tokenKey: key, tokenLen: 0, v: 1 } }
     }
 
-    // 无 tokenKey 的平台（小米）：续期靠"用分区 Cookie 真实发一次业务请求"，由外层适配器验证结果
-    await sleep(6000)
-    const cookies = await collectAllCookies(ses, urls)
+    // 无 tokenKey 的平台（小米）：续期靠"用分区 Cookie 真实请求一次业务接口"，
+    // 所以边等边验：页面加载后平台会顺手续期会话，这里每 1.5 秒试一次余额接口，通了就走。
+    let cookies = ''
+    let lastErr = ''
+    for (let i = 0; i < 6; i++) {
+      await sleep(i === 0 ? 2000 : 1500)
+      cookies = await collectAllCookies(ses, urls)
+      if (!cookies) {
+        lastErr = '分区里没有可用 Cookie'
+        continue
+      }
+      if (!recipe.validateSession) {
+        lastErr = ''
+        break // 没配校验就按老行为（有 Cookie 即认为可用）
+      }
+      const err = await recipe.validateSession(cookies)
+      if (err === null) {
+        lastErr = ''
+        break
+      }
+      lastErr = err
+    }
     if (!cookies) {
       logger.warn(`[renew] ${type} 静默续期失败（${opts.reason}）：分区里没有可用 Cookie`)
       return { ok: false, error: '会话已失效，需要重新登录一次' }
     }
-    logger.info(`[renew] ${type} 已刷新分区会话（${opts.reason}，Cookie ${cookies.split('; ').filter(Boolean).length} 个），交由适配器验证`)
+    /**
+     * 关键：**用真实接口确认这份会话确实可用**，不能直接返回 ok。
+     *
+     * 以前这里无条件返回 ok:true（只要分区里有 Cookie 就算成功），于是"静默续期成功"这条日志
+     * 完全没有意义：小米那条链路的分区里只有 SSO Cookie（passToken 之类），拿不到平台会话，
+     * 却每次都报成功，而查询一直在 401 —— 用户看到的就是"一直提示重新登录"。
+     * 现在验不过就如实报失败，让保活/查询链路正常走"提示重新登录"的分支。
+     */
+    if (lastErr) {
+      logger.warn(`[renew] ${type} 静默续期失败（${opts.reason}）：会话不可用（${lastErr}；Cookie ${cookies.split('; ').filter(Boolean).length} 个）`)
+      return {
+        ok: false,
+        error: '会话已失效，需要重新登录一次',
+        session: { ts: Date.now(), cookies, tokenKey: '', tokenLen: 0, v: 1 }
+      }
+    }
+    logger.info(`[renew] ${type} 已刷新分区会话（${opts.reason}，Cookie ${cookies.split('; ').filter(Boolean).length} 个）并通过接口验证`)
     return { ok: true, session: { ts: Date.now(), cookies, tokenKey: '', tokenLen: 0, v: 1 } }
   } catch (e) {
     logger.warn(`[renew] ${type} 续期异常：${(e as Error).message}`)

@@ -70,7 +70,7 @@ const api: PanelApi = {
     return ipcRenderer.invoke(IPC.APP_OPEN_DATA_DIR)
   },
 
-  loginSite(payload: { url: string; name: string; platform?: string; extraUrls?: string[]; accountId?: string }): Promise<{ ok: boolean; cookie?: string; error?: string; canRenew?: boolean }> {
+  loginSite(payload: { url: string; name: string; platform?: string; extraUrls?: string[]; accountId?: string }): Promise<{ ok: boolean; cookie?: string; error?: string; canRenew?: boolean; renewHint?: string }> {
     return ipcRenderer.invoke(IPC.ACCOUNT_LOGIN, payload)
   },
 

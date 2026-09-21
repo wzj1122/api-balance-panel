@@ -237,8 +237,8 @@ export async function loginSite(
   platform?: string,
   extraUrls?: string[],
   accountId?: string
-): Promise<RpcResult<{ ok: boolean; cookie?: string; error?: string; canRenew?: boolean }>> {
-  return safeInvoke<{ ok: boolean; cookie?: string; error?: string; canRenew?: boolean }>(IPC.ACCOUNT_LOGIN, {
+): Promise<RpcResult<{ ok: boolean; cookie?: string; error?: string; canRenew?: boolean; renewHint?: string }>> {
+  return safeInvoke<{ ok: boolean; cookie?: string; error?: string; canRenew?: boolean; renewHint?: string }>(IPC.ACCOUNT_LOGIN, {
     url,
     name,
     platform,

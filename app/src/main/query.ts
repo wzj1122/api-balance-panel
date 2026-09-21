@@ -51,19 +51,38 @@ function adapterCtx() {
 }
 
 /**
+ * 续期冷却：同一账号失败后 5 分钟内不再重试。
+ *
+ * 为什么需要：续期现在会**真实校验**结果（renewal.ts 里用余额接口验），失败时不再谎报成功；
+ * 而查询链路在"凭据临期"和"查询 401"两处都会触发续期，保活每 20 分钟还会再来一次。
+ * 没有冷却的话，一个已经失效的会话会被反复拿去开隐藏窗口试（每次 6~10 秒），
+ * 白白消耗网络与资源。成功的续期会清掉冷却。
+ */
+const renewCooldown = new Map<string, number>()
+const RENEW_COOLDOWN_MS = 5 * 60 * 1000
+
+/**
  * 给某个账号做一次静默续期，成功则落盘并返回 true。
  * @param reason 'expired' 到期/失败后自动续期；'manual' 用户点卡片按钮；'startup' 启动时预热
  */
 export async function renewForAccount(account: Account, reason: 'expired' | 'manual' | 'startup'): Promise<boolean> {
   if (!supportsRenewal(account.type)) return false
+  // 手动点按钮时不受冷却限制（用户明确要求重试）
+  const until = renewCooldown.get(account.id) ?? 0
+  if (reason !== 'manual' && Date.now() < until) {
+    logger.info(`[query] ${account.name} 续期冷却中（${Math.ceil((until - Date.now()) / 1000)} 秒后再试），跳过本次`)
+    return false
+  }
   const session = store.getSession(account)
   const r = await renewCredential(account.type, session, { reason })
   // 无论成功失败都把最新的会话材料存下来（失败时也更新，便于下次判断会话是否已失效）
   if (r.session) store.saveCredential(account.id, { session: r.session })
   if (!r.ok || !r.secret) {
     if (r.session) store.saveCredential(account.id, { tokenExpiresAt: 0 })
+    if (reason !== 'manual') renewCooldown.set(account.id, Date.now() + RENEW_COOLDOWN_MS)
     return false
   }
+  renewCooldown.delete(account.id)
   store.saveCredential(account.id, { secret: r.secret, session: r.session ?? session, tokenExpiresAt: r.expiresAt ?? null })
   invalidateCache(account.id)
   logger.info(`[query] ${account.name} 静默续期成功（${reason}），凭据有效期至 ${r.expiresAt ? new Date(r.expiresAt).toLocaleString('zh-CN') : '未知'}`)
