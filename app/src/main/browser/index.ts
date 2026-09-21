@@ -339,11 +339,35 @@ export function loginToSite(opts: LoginOptions): Promise<LoginResult> {
      */
     const HARD_DEADLINE_MS = 10 * 60 * 1000
 
+    /**
+     * 处理收尾：手上有凭据且校验 + 落盘复验都通过 → 直接落定结果（不需要用户做任何事）。
+     *
+     * 注意「只认新凭据」这条纪律：走到这里的凭据要么是开窗前就验过可用的会话，
+     * 要么是"打开窗口后清空了旧凭据、用户重新登录出来的"新凭据——不会再把
+     * 分区里残留的旧会话当成"用户刚登录成功"（那正是"还没登录窗口就自己关了"的原因）。
+     */
+    let initialCredential = ''
+    let preflightDone = false
+
     const closeWin = () => {
       try { win.close() } catch { /* 已关闭 */ }
     }
 
-    // 轮询：URL 进入登录成功页后开始校验，通过就自动关窗
+    /** 手上有凭据且校验 + 落盘复验都通过 → 直接落定结果（不需要用户做任何事） */
+    const settleWith = async (value: string, why: string): Promise<boolean> => {
+      const verifyErr = await verifyCredential(value)
+      if (verifyErr !== null) return false
+      settled = true
+      pendingCredential = value
+      clearInterval(timer)
+      logger.info(`[browser] ${opts.name} ${why}`)
+      try { win.setTitle('登录 ' + opts.name + '（校验通过，即将自动关闭）') } catch { /* 忽略 */ }
+      await sleep(200) // 留一点时间给最后一批凭据落盘
+      closeWin()
+      return true
+    }
+
+    // 轮询：出现"新的可用凭据"或用户关窗时收尾
     const poll = async () => {
       // 注意：不再要求必须有 success 规则——平台只要能用「真实接口校验」就能自动关窗
       if (settled || autoClosing) return
@@ -372,20 +396,12 @@ export function loginToSite(opts: LoginOptions): Promise<LoginResult> {
       while (!settled) {
         try {
           const { value, error } = await grabCredential()
-          if (value && error === null) {
-            // 关键：校验通过还不够，还要确认"存下去的凭据真的能用"（见 verifyCredential 注释）
-            const verifyErr = await verifyCredential(value)
-            if (verifyErr === null) {
-              try { win.setTitle('登录 ' + opts.name + '（校验通过，即将自动关闭）') } catch { /* 忽略 */ }
-              // 先落定结果再关窗：避免"正在关窗时用户手动点了 ×"导致凭据读不到
-              settled = true
-              pendingCredential = value
-              clearInterval(timer)
-              await sleep(400) // 留一点时间给最后一批凭据落盘
-              closeWin()
-              return
-            }
-            // 复验没过：窗口继续开着，让用户/页面再试（不关窗、不假装成功）
+          // 关键：必须是与打开窗口时**不同的新凭据**，否则会把"分区里的旧会话"当成
+          // "用户刚登录成功"，导致用户还没登录窗口就自动关了（本次实测的 Bug）。
+          const isNew = Boolean(value) && value !== initialCredential
+          if (value && error === null && isNew) {
+            // 落盘复验（见 verifyCredential 注释）：只有真能查到数才算成功
+            if (await settleWith(value, '登录完成，已获取新凭据')) return
           }
           // 每 5 秒把"当前在哪一步"记一次日志，方便用户/开发者定位卡点（不含凭据内容）
           const now = Date.now()
@@ -409,17 +425,8 @@ export function loginToSite(opts: LoginOptions): Promise<LoginResult> {
         } catch (e) {
           logger.warn('[browser] 自动校验失败：' + (e as Error).message)
         }
-        if (Date.now() - matchedAt > (loginRounds === 1 ? 20000 : 60000)) {
-          // 第一轮（复用会话）只等 20 秒：会话还有效的话早就换回 token 了；
-          // 超过就清空凭据、进入正常的登录流程，避免用户干等。
-          if (loginRounds < MAX_LOGIN_ROUNDS) {
-            logger.info(`[browser] ${opts.name} 复用会话未成功（20 秒内没拿到可用登录态），改为清空凭据后正常登录`)
-            try { win.setTitle('登录 ' + opts.name + '：请登录（登录完成后窗口会自动关闭）') } catch { /* 忽略 */ }
-            matchedAt = Date.now()
-            autoClosing = false
-            openWith(true)
-            return
-          }
+        // 兜底：长时间没检测到（用户走开了等）就停止静默重试，把窗口留给用户手动登录/关闭
+        if (Date.now() - matchedAt > 120000) {
           let lastUrl = ''
           try { lastUrl = win.webContents.getURL() } catch { /* 忽略 */ }
           logger.warn(`[browser] ${opts.name} 自动检测超时（最后停在：${lastUrl}；${lastNote || '未读到登录态'}）`)
@@ -523,28 +530,20 @@ export function loginToSite(opts: LoginOptions): Promise<LoginResult> {
     })
 
     /**
-     * 打开页面（两种策略，最多走两轮）：
-     * A. 先**复用**分区里的既有会话（上次登录留下的 Cookie）→ 平台若认这个会话，会自己换出新 token，
-     *    轮询读到并通过校验就自动关窗，**用户不用输密码**。这是延长登录有效期的关键。
-     * B. 复用失败（没有会话 Cookie / 会话已失效 / 旧 token 校验不通过）→ 清空凭据重开一次，
-     *    让用户正常登录（清空是为了避免过期 token 让校验"假通过"，这个坑真实发生过）。
+     * 打开登录页：**先清空分区凭据再打开**。
+     *
+     * 以前这里分两轮（先复用既有会话、20 秒不行再清空重开），实测那两个动作都在骗用户：
+     * 复用那一轮要么白等 20 秒、要么把旧会话当成"登录成功"把窗口关掉。现在"能不能复用"
+     * 已经在开窗前的检查里用真实接口定过了（能用就直接返回、根本不开窗），
+     * 所以走到这里就是"确实需要用户重新登录"，清空后给一个干净的登录页最简单也最不会出错。
      */
-    let loginRounds = 0
-    const MAX_LOGIN_ROUNDS = 2
-
-    const openWith = (clearFirst: boolean): void => {
-      loginRounds++
+    const openWith = (): void => {
       const go = (): void => {
         try {
           void win.loadURL(opts.url)
         } catch (e) {
           logger.warn('[browser] 加载登录页失败：' + (e as Error).message)
         }
-      }
-      if (!clearFirst) {
-        logger.info('[browser] 先尝试复用登录分区里的既有会话（不清空凭据）')
-        go()
-        return
       }
       void ses
         .clearStorageData({ storages: ['cookies', 'localstorage'] })
@@ -554,18 +553,19 @@ export function loginToSite(opts: LoginOptions): Promise<LoginResult> {
     }
 
     /**
-     * 判断分区里的既有会话是否**真的可用**。
+     * 起飞前检查（**在开窗口之前**）：
      *
-     * 只看"有没有 Cookie 名字"是不够的：小米分区里躺着一个 2026-09-09 的旧 passToken（名字对、早就失效），
-     * 以前据此走"复用会话"路径 → 打开控制台被踢回登录页 → 20 秒后才清凭据重新登录，
-     * 用户看到的却是"窗口开了又关"。
-     * 现在只要配了 validate，就**用真实接口验证一次**：不通过直接走清空重登，省掉那次无效往返。
+     * 0. 浏览器进程里已经有一份可用会话（分区 Cookie）→ 用户不用做任何事，直接用，**不开窗口**；
+     * 1. 都不行才开窗口，并且只认「用户登录后出现的新凭据」（见 initialCredential）。
+     *
+     * 第 0 步是本次实测后加的：以前无论如何都会开窗口，然后第一个轮询就把分区里的旧会话
+     * 当成"登录成功"把窗口关掉 —— 用户看到的就是"我刚点开浏览器，还没登录它自己就关了，
+     * 还提示我登录成功了"。真正的"自动检测"就应该先检查、能复用就别打扰用户。
      */
-    const reuseSessionIsUsable = async (): Promise<boolean> => {
-      if (!opts.validate) return true // 没有真接口可验（如智谱的 cookie 存在性校验）：退回原来的名字判断
+    void (async () => {
+      let usableCookie = ''
       try {
         const all = await ses.cookies.get({})
-        if (all.length === 0) return false
         const seen = new Set<string>()
         const parts: string[] = []
         for (const c of all) {
@@ -574,29 +574,29 @@ export function loginToSite(opts: LoginOptions): Promise<LoginResult> {
           seen.add(k)
           parts.push(c.name + '=' + c.value)
         }
-        const err = await opts.validate(parts.join('; '))
-        if (err) logger.info('[browser] ' + opts.name + ' 分区里的既有会话已不可用（' + err + '），直接走正常登录')
-        return err === null
-      } catch {
-        return false
-      }
-    }
+        if (parts.length > 0) usableCookie = parts.join('; ')
+      } catch { /* 读不到就当没有 */ }
 
-    void (async () => {
-      let hasSessionCookie = false
-      try {
-        const all = await ses.cookies.get({})
-        hasSessionCookie = all.some(
-          (c) => c.name.startsWith('oauth2_') || c.name.startsWith('api-platform_') || c.name === 'passToken'
-        )
-      } catch { /* 读不到就当没有，走清空路径 */ }
-      // 分区里只有"名字像会话"的旧 Cookie 时，先真实验证一次，避免白等 20 秒
-      if (hasSessionCookie) hasSessionCookie = await reuseSessionIsUsable()
-      logger.info(
-        '[browser] 打开登录窗口：' + opts.name + '（' + opts.url + '）· 分区 ' + partition +
-          (hasSessionCookie ? ' · 检测到可用会话，先试静默续期' : ' · 没有可用会话，直接登录')
-      )
-      openWith(!hasSessionCookie)
+      const hasSessionName =
+        usableCookie.includes('oauth2_') || usableCookie.includes('api-platform_') || usableCookie.includes('passToken')
+      // 步骤 0：分区里像是有会话 → 真实验证一次，可用就直接复用（不开窗口）
+      if (hasSessionName && usableCookie) {
+        const err = opts.validate ? await opts.validate(usableCookie) : null
+        if (err === null) {
+          logger.info('[browser] ' + opts.name + ' 分区里的会话仍然可用，直接复用，不打开登录窗口')
+          if (await settleWith(usableCookie, '已复用现有会话（无需重新登录）')) {
+            closeWin() // 不需要让这个空窗口留在屏幕上
+            return
+          }
+          logger.info('[browser] ' + opts.name + ' 复用的会话没能通过账号侧复验，改为打开登录窗口')
+        } else {
+          logger.info('[browser] ' + opts.name + ' 分区里的既有会话已不可用（' + err + '），需要重新登录')
+        }
+      }
+
+      // 步骤 1：打开窗口（打开前清空旧凭据，保证用户看到的是干净的登录页）
+      logger.info('[browser] 打开登录窗口：' + opts.name + '（' + opts.url + '）· 分区 ' + partition + ' · 需要用户登录')
+      openWith()
     })()
   })
 }

@@ -70,6 +70,8 @@ const loginBusy = ref(false)
 const loginStatus = ref('')
 /** 勾选后保存时同时创建「另一个方式」的 MiMo 账号 */
 const addBoth = ref(false)
+/** 点保存但校验没过时的汇总提示（顶部 banner，保证用户看得见"为什么没保存成功"） */
+const saveHint = ref('')
 
 /** 是否缺少另一种方式（mimo 缺套餐 / mimo-plan 缺余额），用于提示 */
 const otherMissing = () => {
@@ -92,6 +94,7 @@ function initForm() {
   const a = props.account
   const type = (a?.type ?? 'deepseek') as AccountType
   const m = PROVIDER_META[type]
+  saveHint.value = ''
   form.id = a?.id
   form.name = a?.name ?? ''
   form.type = type
@@ -195,6 +198,34 @@ async function doLogin() {
     // 以前登录失败后窗口一关就没下文了，用户只看到卡片一直"等待登录"，不知道发生了什么。
     loginStatus.value = '✗ ' + (r.ok ? r.data?.error || '未获取到登录凭据' : r.error)
   }
+}
+
+/** 取凭据要滚动到的位置，让用户一眼看到提示（见 onSave 的注释） */
+function scrollToSecret(): void {
+  // 用 nextTick 之外的原生滚动：弹窗是普通 div，直接按选择器找即可
+  setTimeout(() => {
+    const el = document.querySelector('.login-row') ?? document.querySelector('.banner.err')
+    if (el && typeof (el as HTMLElement).scrollIntoView === 'function') {
+      ;(el as HTMLElement).scrollIntoView({ block: 'center', behavior: 'smooth' })
+    }
+  }, 0)
+}
+
+/**
+ * 「只重新登录」：配置好的账号重新登录时的一步到位动作。
+ *
+ * 用户的痛点（2026-09-22 反馈）：续期失效后要"点编辑 → 登录 → 保存"三步，
+ * 而且登录完还要自己找「保存账号」按钮；一旦哪一步没反应（比如校验没过、报错在下面看不见），
+ * 就完全卡住。现在这个按钮：登录 → 拿到凭据 → 自动保存 → 关窗。
+ */
+async function relogin(): Promise<void> {
+  await doLogin()
+  if (!form.secret.trim()) {
+    saveHint.value = '重新登录没拿到凭据，账号未改动：' + (loginStatus.value || '未知原因')
+    return
+  }
+  saveHint.value = ''
+  emit('save', buildPayload())
 }
 
 function addHeader() {
@@ -312,7 +343,19 @@ function buildSecondaryPayload(type: AccountType): AccountInput {
 }
 
 function onSave() {
-  if (!validate()) return
+  if (!validate()) {
+    /**
+     * 校验没过时**必须给出可见反馈**。
+     *
+     * 以前这里静默 return：如果卡住的字段在弹窗下半部分（凭据区），用户点「保存账号」
+     * 会觉得按钮坏了（"点了没反应"）。现在把原因汇总提到弹窗顶部，并滚动到出问题的位置。
+     */
+    const msgs = Object.values(errors)
+    saveHint.value = '还有 ' + msgs.length + ' 项没填对：' + msgs.join('；')
+    scrollToSecret()
+    return
+  }
+  saveHint.value = ''
   if (addBoth.value && !isEdit() && otherMissing() && otherType()) {
     emit('save-both', [buildPayload(), buildSecondaryPayload(otherType() as AccountType)])
   } else {
@@ -381,6 +424,16 @@ function onSave() {
                 />
               </svg>
               {{ loginBusy ? '等待登录…' : form.secret ? '重新登录' : '登录并获取' }}
+            </button>
+            <!-- 已有登录态的账号：给一个「只重新登录」的按钮，直接保存、不用再点一遍保存账号 -->
+            <button
+              v-if="isEdit() && props.account?.has_secret && !loginBusy"
+              class="btn primary"
+              type="button"
+              title="只做重新登录：拿到新凭据后直接保存进这个账号并刷新，不用再点「保存账号」"
+              @click="relogin"
+            >
+              只重新登录
             </button>
             <span v-if="form.secret && !loginBusy" class="ok-text">✓ 已获取</span>
           </div>
@@ -546,6 +599,7 @@ function onSave() {
       </div>
     </template>
 
+    <div v-if="saveHint" class="banner err">⚠ {{ saveHint }}</div>
     <div v-if="error" class="banner err">⚠ {{ error }}</div>
 
     <template #footer>
