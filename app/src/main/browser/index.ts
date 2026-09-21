@@ -38,6 +38,14 @@ export interface LoginOptions {
   url: string
   /** 平台显示名（窗口标题与日志） */
   name: string
+  /**
+   * 登录窗口所在分区的主机名（缺省取 url 的 hostname）。
+   *
+   * **必须与静默续期用的分区一致**，否则登录拿到的会话和续期读的会话就是两份东西：
+   * 小米登录页在 account.xiaomi.com、续期在 platform.xiaomimimo.com，两者对不上时
+   * 续期永远拿不到会话 Cookie（详见 shared/constants.ts 的 LOGIN_RULES 注释）。
+   */
+  partitionHost?: string
   /** 额外按这些 URL 抓 Cookie（接口域与登录域不同的平台，如 MiniMax 的 www 域） */
   extraUrls?: string[]
   /** 抓完 Cookie 后立即校验：返回 null = 通过；返回字符串 = 失败原因 */
@@ -54,6 +62,16 @@ export interface LoginOptions {
    * 把登录这一刻的会话存下来，之后就能自动续期，用户不用反复重新登录。
    */
   collectSession?: (info: { cookie: string; token: string }) => Promise<CredentialSession | null>
+  /**
+   * 保存凭据前的**落盘后复验**：用刚保存的凭据真跑一次账号逻辑（适配器）。
+   * 返回 null = 可用；返回字符串 = 仍然不可用（原因）。
+   *
+   * 为什么必须有这一步：以前只校验"登录窗口里的凭据能用"，然后就关窗、静默保存，
+   * 结果用户明明登录成功，界面上却一直显示"等待登录"（保存下来的凭据用不了，
+   * 而登录窗口已经关了，用户不知道还要再点一次）。现在保存后立刻复验，不通过就
+   * 如实报错，绝不留下"看起来成功了、其实是坏的"凭据。
+   */
+  verify?: (credential: string) => Promise<string | null>
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -190,14 +208,22 @@ async function describeTokenKeys(win: BrowserWindow): Promise<string> {
  */
 export function loginToSite(opts: LoginOptions): Promise<LoginResult> {
   return new Promise((resolve) => {
-    let host = opts.url
+    /**
+     * 分区主机名：默认取登录页 hostname，但登录型平台必须显式指定成「真正持有会话 Cookie 的域」
+     * （见 LoginOptions.partitionHost），否则登录与静默续期会落在两个互不相通的分区里。
+     */
+    let urlHost = ''
     try {
-      host = new URL(opts.url).hostname
+      urlHost = new URL(opts.url).hostname
     } catch {
       // 解析不出就用兜底分区名
     }
-    const partition = 'persist:login-' + host
+    const partitionHost = opts.partitionHost && opts.partitionHost.length > 0 ? opts.partitionHost : urlHost
+    const partition = 'persist:login-' + partitionHost
     const ses = session.fromPartition(partition)
+    if (opts.partitionHost && opts.partitionHost !== urlHost) {
+      logger.info(`[browser] ${opts.name} 登录分区固定为 ${partitionHost}（登录页在 ${urlHost}，回调会回到 ${partitionHost} 下发会话）`)
+    }
 
     const win = new BrowserWindow({
       width: 920,
@@ -273,6 +299,31 @@ export function loginToSite(opts: LoginOptions): Promise<LoginResult> {
       return { value: cookie, error: err }
     }
 
+    /**
+     * 「落盘后复验」：把刚拿到的凭据实际存进账号，再用适配器真跑一次。
+     *
+     * 这是修「登录成功自动关窗后界面仍显示等待登录」的关键：以前只校验凭据本身，
+     * 保存的却可能是另一份（或在保存/读取链路上出了岔子）导致用户白登录一次。
+     * 现在保存后立刻用它跑一遍账号逻辑，只有真的能查到数才算成功。
+     */
+    const verifyCredential = async (credential: string): Promise<string | null> => {
+      if (!opts.verify) return null
+      try {
+        const err = await opts.verify(credential)
+        if (err) {
+          lastValidationError = err
+          logger.warn('[browser] ' + opts.name + ' 保存后的凭据复验未通过：' + err)
+          return err
+        }
+        logger.info('[browser] ' + opts.name + ' 凭据已保存并通过账号侧复验')
+        return null
+      } catch (e) {
+        const msg = (e as Error).message
+        logger.warn('[browser] ' + opts.name + ' 保存后复验异常：' + msg)
+        return '保存后复验异常：' + msg
+      }
+    }
+
     let settled = false
     let autoClosing = false
     let matchedAt = 0
@@ -282,6 +333,11 @@ export function loginToSite(opts: LoginOptions): Promise<LoginResult> {
     let lastNote = ''
     let lastNoteAt = 0
     const startedAt = Date.now()
+    /**
+     * 兜底上限：万一某一步永远不返回（网络连接卡死等），也不能让 Promise 永久挂起——
+     * 否则界面会一直停在"等待登录"，而登录窗口早就关了，用户完全不知道发生了什么。
+     */
+    const HARD_DEADLINE_MS = 10 * 60 * 1000
 
     const closeWin = () => {
       try { win.close() } catch { /* 已关闭 */ }
@@ -291,6 +347,18 @@ export function loginToSite(opts: LoginOptions): Promise<LoginResult> {
     const poll = async () => {
       // 注意：不再要求必须有 success 规则——平台只要能用「真实接口校验」就能自动关窗
       if (settled || autoClosing) return
+      // 硬超时兜底：宁可明确失败，也不要让界面永久停在"等待登录"
+      if (Date.now() - startedAt > HARD_DEADLINE_MS) {
+        settled = true
+        clearInterval(timer)
+        logger.warn(`[browser] ${opts.name} 登录窗口已超过 ${Math.round(HARD_DEADLINE_MS / 60000)} 分钟仍未完成，放弃等待`)
+        closeWin()
+        resolve({
+          ok: false,
+          error: '等待登录超时（超过 ' + Math.round(HARD_DEADLINE_MS / 60000) + ' 分钟）。请重新点「登录」，并在弹出的窗口里登录到控制台后等待窗口自动关闭。'
+        })
+        return
+      }
       let u = ''
       try { u = win.webContents.getURL() } catch { return }
       let parsed: URL | null = null
@@ -305,24 +373,34 @@ export function loginToSite(opts: LoginOptions): Promise<LoginResult> {
         try {
           const { value, error } = await grabCredential()
           if (value && error === null) {
-            try { win.setTitle('登录 ' + opts.name + '（校验通过，即将自动关闭）') } catch { /* 忽略 */ }
-            // 先落定结果再关窗：避免"正在关窗时用户手动点了 ×"导致凭据读不到
-            settled = true
-            pendingCredential = value
-            await sleep(400) // 留一点时间给最后一批凭据落盘
-            closeWin()
-            return
+            // 关键：校验通过还不够，还要确认"存下去的凭据真的能用"（见 verifyCredential 注释）
+            const verifyErr = await verifyCredential(value)
+            if (verifyErr === null) {
+              try { win.setTitle('登录 ' + opts.name + '（校验通过，即将自动关闭）') } catch { /* 忽略 */ }
+              // 先落定结果再关窗：避免"正在关窗时用户手动点了 ×"导致凭据读不到
+              settled = true
+              pendingCredential = value
+              clearInterval(timer)
+              await sleep(400) // 留一点时间给最后一批凭据落盘
+              closeWin()
+              return
+            }
+            // 复验没过：窗口继续开着，让用户/页面再试（不关窗、不假装成功）
           }
           // 每 5 秒把"当前在哪一步"记一次日志，方便用户/开发者定位卡点（不含凭据内容）
           const now = Date.now()
-          if (error && now - lastNoteAt > 5000) {
+          const verified = Boolean(value) && error === null
+          if (now - lastNoteAt > 5000) {
             lastNoteAt = now
-            lastNote = error
-            let u = ''
-            try { u = win.webContents.getURL() } catch { /* 忽略 */ }
-            logger.info(`[browser] ${opts.name} 等待登录中…（当前页面：${u || '未知'}；${error}）`)
+            lastNote = verified
+              ? '凭据已通过接口校验，但账号侧复验未通过：' + (lastValidationError || '未知原因')
+              : (error || '还没读到可用凭据')
+            let cu = ''
+            try { cu = win.webContents.getURL() } catch { /* 忽略 */ }
+            logger.info(`[browser] ${opts.name} 等待登录中…（当前页面：${cu || '未知'}；${lastNote}）`)
             // 已经处在控制台（说明登录已完成）却读不到登录态 → 主动重载一次，让平台把 token 写回 localStorage
-            if (wantToken && reloads < CONSENT_RELOAD_LIMIT && u.includes(new URL(opts.url).hostname + '/console')) {
+            // （只在"还没读到凭据"时重载；复验失败时重载没用，反而会把页面状态打断）
+            if (wantToken && !verified && reloads < CONSENT_RELOAD_LIMIT && cu.includes(new URL(opts.url).hostname + '/console')) {
               reloads++
               logger.info(`[browser] ${opts.name} 已在控制台但读不到登录态，主动重载一次以取回登录态（第 ${reloads} 次）`)
               try { void win.loadURL(opts.url) } catch { /* 忽略 */ }
@@ -400,6 +478,12 @@ export function loginToSite(opts: LoginOptions): Promise<LoginResult> {
                 return
               }
             }
+            // 保存前复验一次（由上层真的存进账号并用适配器跑一遍），避免"关了窗却存了个用不了的凭据"
+            const verifyErr = await verifyCredential(token)
+            if (verifyErr) {
+              resolve({ ok: false, error: '登录态校验通过，但账号侧复验仍未通过：' + verifyErr + '。请确认窗口里已经登录进控制台后重试' })
+              return
+            }
             logger.info('[browser] ' + opts.name + ' 登录完成，已获取登录态（token 长度 ' + token.length + '）')
             resolve({ ok: true, cookie: token, session: await buildSession(token) })
             return
@@ -418,11 +502,24 @@ export function loginToSite(opts: LoginOptions): Promise<LoginResult> {
               return
             }
           }
+          // 保存前复验一次（见 verifyCredential 注释）：关窗前确认这份 Cookie 真的能查到数
+          const verifyErr = await verifyCredential(cookieStr)
+          if (verifyErr) {
+            resolve({
+              ok: false,
+              error: '窗口里的登录态校验通过，但账号侧复验仍未通过：' + verifyErr + '。请在窗口里确认已经登录进控制台（看到余额页）后重试'
+            })
+            return
+          }
           resolve({ ok: true, cookie: cookieStr, session: await buildSession(cookieStr) })
         } catch (e) {
           resolve({ ok: false, error: '读取登录凭据失败：' + (e as Error).message })
         }
-      })()
+      })().catch((e: unknown) => {
+        // 兜底：任何未预期异常也必须 resolve，否则界面会永久停在"等待登录"
+        logger.warn('[browser] ' + opts.name + ' 关窗处理异常：' + (e as Error).message)
+        resolve({ ok: false, error: '读取登录凭据失败：' + (e as Error).message })
+      })
     })
 
     /**
@@ -456,6 +553,35 @@ export function loginToSite(opts: LoginOptions): Promise<LoginResult> {
         .finally(go)
     }
 
+    /**
+     * 判断分区里的既有会话是否**真的可用**。
+     *
+     * 只看"有没有 Cookie 名字"是不够的：小米分区里躺着一个 2026-09-09 的旧 passToken（名字对、早就失效），
+     * 以前据此走"复用会话"路径 → 打开控制台被踢回登录页 → 20 秒后才清凭据重新登录，
+     * 用户看到的却是"窗口开了又关"。
+     * 现在只要配了 validate，就**用真实接口验证一次**：不通过直接走清空重登，省掉那次无效往返。
+     */
+    const reuseSessionIsUsable = async (): Promise<boolean> => {
+      if (!opts.validate) return true // 没有真接口可验（如智谱的 cookie 存在性校验）：退回原来的名字判断
+      try {
+        const all = await ses.cookies.get({})
+        if (all.length === 0) return false
+        const seen = new Set<string>()
+        const parts: string[] = []
+        for (const c of all) {
+          const k = c.name + '\u0000' + (c.domain ?? '')
+          if (seen.has(k)) continue
+          seen.add(k)
+          parts.push(c.name + '=' + c.value)
+        }
+        const err = await opts.validate(parts.join('; '))
+        if (err) logger.info('[browser] ' + opts.name + ' 分区里的既有会话已不可用（' + err + '），直接走正常登录')
+        return err === null
+      } catch {
+        return false
+      }
+    }
+
     void (async () => {
       let hasSessionCookie = false
       try {
@@ -464,7 +590,12 @@ export function loginToSite(opts: LoginOptions): Promise<LoginResult> {
           (c) => c.name.startsWith('oauth2_') || c.name.startsWith('api-platform_') || c.name === 'passToken'
         )
       } catch { /* 读不到就当没有，走清空路径 */ }
-      logger.info('[browser] 打开登录窗口：' + opts.name + '（' + opts.url + '）' + (hasSessionCookie ? ' · 检测到既有会话，先试静默续期' : ''))
+      // 分区里只有"名字像会话"的旧 Cookie 时，先真实验证一次，避免白等 20 秒
+      if (hasSessionCookie) hasSessionCookie = await reuseSessionIsUsable()
+      logger.info(
+        '[browser] 打开登录窗口：' + opts.name + '（' + opts.url + '）· 分区 ' + partition +
+          (hasSessionCookie ? ' · 检测到可用会话，先试静默续期' : ' · 没有可用会话，直接登录')
+      )
       openWith(!hasSessionCookie)
     })()
   })

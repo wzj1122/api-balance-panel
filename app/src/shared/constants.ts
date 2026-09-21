@@ -191,6 +191,7 @@ export const DEEPSEEK_BALANCE_URL = 'https://api.deepseek.com/user/balance'
 export const MIMO_LOGIN_URL = 'https://account.xiaomi.com/fe/service/login/password?_group=DEFAULT&sid=api-platform&qs=%253Fcallback%253Dhttps%25253A%25252F%25252Fplatform.xiaomimimo.com%25252Fsts%25253Fsign%25253DM7gfywevl3CG5YTTcZDifhK6IK8%2525253D%252526followup%25253Dhttps%2525253A%2525252F%2525252Fplatform.xiaomimimo.com%2525252Fconsole%2525252Fbalance%2526sid%253Dapi-platform%2526_group%253DDEFAULT&callback=https%3A%2F%2Fplatform.xiaomimimo.com%2Fsts%3Fsign%3DM7gfywevl3CG5YTTcZDifhK6IK8%253D%26followup%3Dhttps%253A%252F%252Fplatform.xiaomimimo.com%252Fconsole%252Fbalance&_sign=iV9Q5kxBqXGdbkb6kmapXvJrkZM%3D&_locale=zh_CN'
 /** 硅基流动控制台（登录 / Cookie 来源，登录后跳转到 cloud.siliconflow.cn） */
 export const SILICONFLOW_LOGIN_URL = 'https://cloud.siliconflow.cn'
+
 /** 小米 MiMo 现金余额接口（Cookie 方式） */
 export const MIMO_BALANCE_URL = 'https://platform.xiaomimimo.com/api/v1/balance'
 /** 小米 MiMo Token Plan 用量接口（Cookie 方式） */
@@ -221,6 +222,80 @@ export const SENSENOVA_CONSOLE_URL = 'https://platform.sensenova.cn/console'
 export const SENSENOVA_POOL_USAGE_URL = 'https://platform.sensenova.cn/lite/console/v1/tokenplan/pool-usage'
 /** 登录态在 localStorage 里的键名 */
 export const SENSENOVA_TOKEN_KEY = 'access_token'
+
+/**
+ * 登录型平台的「登录分区」配置（**登录窗口与静默续期必须用同一个分区**）。
+ *
+ * 背景（2026-09-22 实测定位的 Bug）：
+ * - 登录窗口原来按 `new URL(loginUrl).hostname` 建分区，小米的登录页在 `account.xiaomi.com`，
+ *   于是登录态落在 `persist:login-account.xiaomi.com`；
+ * - 而静默续期（renewal.ts）用的是 `persist:login-platform.xiaomimimo.com` —— 两个分区互不相通，
+ *   续期永远拿不到能用的会话 Cookie（实测该分区只有 2026-09-09 的旧 passToken，从没被登录刷新过）；
+ * - 商汤同理：分区里只有百度统计 Cookie，没有任何 `oauth2_authentication_session` 之类的会话 Cookie，
+ *   续期脚本因此永远换不回 token。
+ *
+ * 现在把「分区 host」写在这里作为唯一口径，登录（ipc.ts）与续期（renewal.ts）都从这里取，避免再次漂移。
+ */
+export interface LoginPlatformRule {
+  /** 登录窗口所在分区的主机名（= 续期脚本用的分区；必须是真正持有会话 Cookie 的那个域） */
+  partitionHost: string
+  /** 登录成功判定的页面规则（进入这些 host + 路径即视为"登录后"） */
+  success?: { hosts: string[]; pathPrefix?: string }
+  /** 额外按这些 URL 抓 Cookie（会话 Cookie 可能分布在多个域） */
+  extra: string[]
+  /** 登录态存放在 localStorage 的键名（商汤这类只认 Bearer token 的平台） */
+  tokenKey?: string
+  /** 续期材料里记录 token 键名用（与 tokenKey 一致即可） */
+  sessionTokenKey?: string
+  /** 采集续期材料要读的域名（缺省用 extra） */
+  cookieUrls?: string[]
+}
+
+export const LOGIN_RULES: Record<string, LoginPlatformRule> = {
+  mimo: {
+    // 关键：分区挂在 platform.xiaomimimo.com 上。登录页虽然跳到 account.xiaomi.com，
+    // 但回调会回到 platform.xiaomimimo.com/sts 并在**这个域**下发会话 Cookie，
+    // 只有分区不变，续期才能读到同一份会话。
+    partitionHost: 'platform.xiaomimimo.com',
+    extra: ['https://platform.xiaomimimo.com', 'https://xiaomimimo.com'],
+    cookieUrls: ['https://platform.xiaomimimo.com', 'https://xiaomimimo.com', 'https://account.xiaomi.com']
+  },
+  'mimo-plan': {
+    partitionHost: 'platform.xiaomimimo.com',
+    extra: ['https://platform.xiaomimimo.com', 'https://xiaomimimo.com'],
+    cookieUrls: ['https://platform.xiaomimimo.com', 'https://xiaomimimo.com', 'https://account.xiaomi.com']
+  },
+  minimax: {
+    partitionHost: 'platform.minimaxi.com',
+    success: { hosts: ['platform.minimaxi.com', 'platform.minimax.cn'], pathPrefix: '/console/' },
+    extra: [
+      'https://www.minimaxi.com',
+      'https://www.minimax.cn',
+      'https://platform.minimaxi.com',
+      'https://platform.minimax.cn'
+    ]
+  },
+  zhipu: {
+    partitionHost: 'bigmodel.cn',
+    success: { hosts: ['bigmodel.cn'], pathPrefix: '/console/' },
+    extra: []
+  },
+  sensenova: {
+    // 商汤的额度接口只认登录态（Bearer token，存在 localStorage.access_token），Cookie 抓了也没用，
+    // 但**续期要靠分区里的会话 Cookie**（oauth2_*）在隐藏窗口里换回新 token，所以分区同样必须是
+    // platform.sensenova.cn，登录与续期共用一份会话。
+    partitionHost: 'platform.sensenova.cn',
+    tokenKey: SENSENOVA_TOKEN_KEY,
+    sessionTokenKey: SENSENOVA_TOKEN_KEY,
+    extra: [],
+    cookieUrls: ['https://platform.sensenova.cn', 'https://iam.sensecoreapi.cn']
+  }
+}
+
+/** 登录分区名（登录窗口与续期脚本共用；host 必须与 LOGIN_RULES[*].partitionHost 一致） */
+export function loginPartition(partitionHost: string): string {
+  return 'persist:login-' + partitionHost
+}
 
 /**
  * 凭据类型鉴别：

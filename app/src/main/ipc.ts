@@ -1,9 +1,10 @@
 import { app, ipcMain, Notification, session, shell } from 'electron'
-import { MIMO_BALANCE_URL, SENSENOVA_TOKEN_KEY } from '../shared/constants'
+import { LOGIN_RULES, MIMO_BALANCE_URL, loginPartition } from '../shared/constants'
 import { IPC } from '../shared/ipc'
 import type { RefreshPayload } from '../shared/ipc'
-import type { AccountInput, AppInfo, Correction, CorrectionView, CredentialSession, MonitorInput, ReportPeriod, Settings, Snapshot, LogLevel, KeyVaultInput } from '../shared/types'
+import type { Account, AccountInput, AppInfo, Correction, CorrectionView, CredentialSession, MonitorInput, ReportPeriod, Settings, Snapshot, LogLevel, KeyVaultInput } from '../shared/types'
 import { applyAutoStart, getAutoStartStatus } from './autostart'
+import { getAdapter } from './adapters'
 import { backgroundData, backgroundForTheme, importBackground, listBackgrounds, removeBackground } from './bgstore'
 import { exportBackup, importBackup } from './backup'
 import { buildMonitorReport, listChecks, removeMonitor, removeMonitorsBySecret, runMonitors, saveMonitor, testMonitor } from './monitor'
@@ -155,71 +156,39 @@ export function registerIpc(): void {
       accountId?: string
     }
     if (typeof p.url !== 'string' || !p.url) throw new Error('缺少登录地址')
-    // 各平台的「自动关闭」规则：进入控制台 URL 后校验会话，通过即自动关窗
-    const rules: Partial<
-      Record<
-        string,
-        {
-          success?: LoginOptions['success']
-          extra?: string[]
-          validate?: (c: string) => Promise<string | null>
-          /** 登录态存放在 localStorage 里的平台（商汤日日新）：抓 token 而不是 Cookie */
-          tokenKey?: string
-          validateToken?: (t: string) => Promise<string | null>
-          /** 采集续期材料用的域名（会话 Cookie 可能分布在多个域） */
-          cookieUrls?: string[]
-          /** 续期材料里的登录态键名（tokenKey 平台用） */
-          sessionTokenKey?: string
-        }
-      >
-    > = {
-      mimo: {
-        // 登录页在 account.xiaomi.com（小米账号中心），但余额接口需要 platform 域的登录态，
-        // 所以必须把这些域名的 Cookie 一并抓下来，否则校验永远 401。
-        extra: ['https://platform.xiaomimimo.com', 'https://xiaomimimo.com'],
-        validate: validateByUrl(MIMO_BALANCE_URL),
-        cookieUrls: ['https://platform.xiaomimimo.com', 'https://xiaomimimo.com', 'https://account.xiaomi.com']
-      },
-      'mimo-plan': {
-        extra: ['https://platform.xiaomimimo.com', 'https://xiaomimimo.com'],
-        validate: validateByUrl(MIMO_BALANCE_URL),
-        cookieUrls: ['https://platform.xiaomimimo.com', 'https://xiaomimimo.com', 'https://account.xiaomi.com']
-      },
-      minimax: {
-        success: { hosts: ['platform.minimaxi.com', 'platform.minimax.cn'], pathPrefix: '/console/' },
-        extra: [
-          'https://www.minimaxi.com',
-          'https://www.minimax.cn',
-          'https://platform.minimaxi.com',
-          'https://platform.minimax.cn'
-        ],
-        validate: validateMinimaxCookie
-      },
-      zhipu: {
-        success: { hosts: ['bigmodel.cn'], pathPrefix: '/console/' },
-        validate: cookieHas('bigmodel_token_production')
-      },
-      sensenova: {
-        // 商汤日日新的额度接口只认登录态（Bearer token，存在 localStorage.access_token），
-        // Cookie 抓了也没用（实测 401），所以这里走 tokenKey 分支。
-        tokenKey: SENSENOVA_TOKEN_KEY,
-        validateToken: validateSenseNovaToken,
-        cookieUrls: ['https://platform.sensenova.cn', 'https://iam.sensecoreapi.cn'],
-        sessionTokenKey: SENSENOVA_TOKEN_KEY
+    /**
+     * 各平台的登录规则统一放在 shared/constants.ts 的 LOGIN_RULES（含**分区 host**）。
+     * 之前规则内联在这里、分区名由登录页 hostname 推导，导致登录与静默续期落在两个分区里
+     * （小米 / 商汤登录后界面一直显示"等待登录"的根因），现在两边共用同一张表，无法再漂移。
+     */
+    const rule = p.platform ? LOGIN_RULES[p.platform] : undefined
+    // 分区 host：优先规则里的（真正持有会话 Cookie 的域），否则退回登录页 hostname
+    let partitionHost = rule?.partitionHost ?? ''
+    if (!partitionHost) {
+      try {
+        partitionHost = new URL(p.url).hostname
+      } catch {
+        partitionHost = ''
       }
     }
-    const rule = p.platform ? rules[p.platform] : undefined
+    const buildValidate = (platform?: string): LoginOptions['validate'] => {
+      if (platform === 'mimo' || platform === 'mimo-plan') return validateByUrl(MIMO_BALANCE_URL)
+      if (platform === 'minimax') return validateMinimaxCookie
+      if (platform === 'zhipu') return cookieHas('bigmodel_token_production')
+      return undefined
+    }
     const extraUrls = Array.from(
       new Set([
         ...(Array.isArray(p.extraUrls) ? p.extraUrls.filter((x): x is string => typeof x === 'string') : []),
         ...(rule?.extra ?? [])
       ])
     )
-    // 采集「续期材料」：登录这一刻的会话 Cookie 是后续静默续期的钥匙，必须一起存下来
+    // 采集「续期材料」：登录这一刻的会话 Cookie 是后续静默续期的钥匙，必须一起存下来。
+    // **从 partitionHost 那个分区读**（与续期脚本同一个分区），否则存下来的会话续期读不到。
     const sessionUrls = rule?.cookieUrls?.length ? rule.cookieUrls : extraUrls.length ? extraUrls : [p.url]
     const collectSession = rule?.cookieUrls
       ? async (): Promise<CredentialSession | null> => {
-          const ses = session.fromPartition('persist:login-' + new URL(p.url as string).hostname)
+          const ses = session.fromPartition(loginPartition(partitionHost))
           const parts: string[] = []
           const seen = new Set<string>()
           for (const u of sessionUrls) {
@@ -242,15 +211,50 @@ export function registerIpc(): void {
         }
       : undefined
 
+    /**
+     * 保存后的复验：把凭据真的存进账号，再用适配器跑一次。
+     * 只有真能查到数才算"登录成功"——避免出现"窗口关了、凭据存了、界面却一直等待登录"。
+     */
+    const accountId = typeof p.accountId === 'string' && p.accountId ? p.accountId : ''
+    const verifyAfterSave: LoginOptions['verify'] = accountId
+      ? async (credential) => {
+          store.saveCredential(accountId, {
+            secret: credential,
+            session: null,
+            tokenExpiresAt: jwtExpiry(credential)
+          })
+          invalidateCache(accountId)
+          const acc = store.getAccount(accountId)
+          if (!acc) return '账号不存在'
+          try {
+            const adapter = getAdapter(acc.type)
+            const row = await adapter(acc, {
+              getSecret: (a: Account): string => store.getSecret(a),
+              getSession: (a: Account): CredentialSession | null => store.getSession(a),
+              saveRenewed: (a: Account, token: string, session: CredentialSession | null): void => {
+                store.saveCredential(a.id, { secret: token, session })
+              }
+            })
+            if (row.ok) return null
+            return '账号查询失败（' + (row.errorCode ?? '未知') + '）：' + (row.errorDetail ?? row.note ?? '')
+          } catch (e) {
+            const err = e as { code?: string; detail?: string; message?: string }
+            return '账号查询异常（' + (err.code ?? '未知') + '）：' + (err.detail ?? err.message ?? '')
+          }
+        }
+      : undefined
+
     const result = await loginToSite({
       url: p.url,
       name: typeof p.name === 'string' && p.name ? p.name : '站点',
+      partitionHost: partitionHost || undefined,
       extraUrls,
       success: rule?.success,
-      validate: rule?.validate,
+      validate: buildValidate(p.platform),
       tokenKey: rule?.tokenKey,
-      validateToken: rule?.validateToken,
-      collectSession
+      validateToken: rule?.tokenKey ? validateSenseNovaToken : undefined,
+      collectSession,
+      verify: verifyAfterSave
     })
 
     // 登录成功就把新凭据 + 续期材料一起写进账号，之后由后台保活自动续期

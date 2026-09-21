@@ -16,7 +16,7 @@ const docHtml = `<h1>API 余额面板 · 使用说明</h1>
 <h3>2) 硅基流动</h3>
 <ol><li>打开 <a href="https://cloud.siliconflow.cn/" target="_blank" rel="noopener">硅基流动控制台</a> 登录（没账号先注册）。</li><li>面板里选「硅基流动」，点「登录获取 Cookie」——会弹出登录窗口，登录完成后窗口会自动关闭，程序自动抓取 Cookie。</li><li>Cookie 失效后卡片会提示「重新登录」，点卡片上的编辑 → 再点一次登录按钮即可。</li><li>说明：官方已于 2026-08-14 下线 API Key 余额接口，所以这个平台必须用「登录」方式。</li></ol>
 <h3>3) 小米 MiMo</h3>
-<ol><li>打开 <a href="https://platform.xiaomimimo.com/" target="_blank" rel="noopener">MiMo 开发平台</a> 登录。</li><li>面板里选「小米 MiMo」，点「登录 MiMo 获取 Cookie」，会直接跳到小米账号登录页，登录完成窗口自动关闭。</li><li>Cookie 约 24 小时过期，过期后点「重新登录」即可。</li></ol>
+<ol><li>打开 <a href="https://platform.xiaomimimo.com/" target="_blank" rel="noopener">MiMo 开发平台</a> 登录。</li><li>面板里选「小米 MiMo」，点「登录 MiMo 获取 Cookie」，会直接跳到小米账号登录页，登录完成窗口自动关闭。</li><li><strong>窗口关闭 ≠ 一定成功</strong>：关窗前程序会先把凭据存进账号、并真的查一次余额，查得通才算成功；查不通会明确提示原因（且不会自动关窗），不会再出现"窗口关了却一直显示等待登录"。</li><li>登录窗口与后台自动保活用的是<strong>同一个登录分区</strong>（platform.xiaomimimo.com），所以之后能靠会话静默续期，不用反复登录。若卡片一直显示「等待登录」，请再点一次「登录」，并确认在弹出的窗口里进到了余额页。</li></ol>
 <h3>4) New API / One API 中转站</h3>
 <ol><li>你的中转站后台（如 <code>https://你的域名</code>）生成一个令牌（一般 <code>sk-</code> 开头）。</li><li>面板里选「New API / One API 中转站」，填站点地址（<strong>只填域名，不要带 /v1</strong>）和令牌。</li><li>如有用户 ID 需求（部分站点），一并填写；没有就留空。</li></ol>
 <h3>5) 自定义（抓包填写）</h3>

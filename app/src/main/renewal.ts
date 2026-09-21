@@ -1,5 +1,5 @@
 import { BrowserWindow, session } from 'electron'
-import { SENSENOVA_POOL_USAGE_URL, SENSENOVA_TOKEN_KEY } from '../shared/constants'
+import { LOGIN_RULES, SENSENOVA_POOL_USAGE_URL, loginPartition } from '../shared/constants'
 import type { Account, CredentialSession } from '../shared/types'
 import { logger } from './logger'
 
@@ -66,15 +66,16 @@ async function validateSenseNovaToken(token: string): Promise<string | null> {
 
 /** 商汤续期配方：加载控制台 → 平台用会话换新 token 写进 localStorage */
 export const SENSENOVA_RENEWAL: RenewalRecipe = {
-  partition: 'persist:login-platform.sensenova.cn',
+  // 分区名从登录规则推导（唯一口径）：登录窗口与续期必须是同一个分区，否则续期读不到会话
+  partition: loginPartition(LOGIN_RULES.sensenova.partitionHost),
   pageUrl: 'https://platform.sensenova.cn/console',
-  tokenKey: SENSENOVA_TOKEN_KEY,
+  tokenKey: LOGIN_RULES.sensenova.tokenKey ?? 'access_token',
   validateToken: validateSenseNovaToken
 }
 
 /** 小米 MiMo 续期配方：加载控制台 + 主动请求一次余额接口（续期由这个请求触发） */
 export const MIMO_RENEWAL: RenewalRecipe = {
-  partition: 'persist:login-platform.xiaomimimo.com',
+  partition: loginPartition(LOGIN_RULES.mimo.partitionHost),
   pageUrl: 'https://platform.xiaomimimo.com/console/balance',
   apiUrl: 'https://platform.xiaomimimo.com/api/v1/balance'
 }

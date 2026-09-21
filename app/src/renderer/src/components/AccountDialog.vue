@@ -186,7 +186,9 @@ async function doLogin() {
       ? '已获取登录态，保存后自动抓取额度' + renewHint
       : '已获取 Cookie，保存后自动抓取余额' + renewHint
   } else {
-    loginStatus.value = r.ok ? r.data?.error || '未获取到登录凭据' : r.error
+    // 失败时把原因写清楚（含"账号侧复验未通过"这类信息），并主动提示用户看这一行：
+    // 以前登录失败后窗口一关就没下文了，用户只看到卡片一直"等待登录"，不知道发生了什么。
+    loginStatus.value = '✗ ' + (r.ok ? r.data?.error || '未获取到登录凭据' : r.error)
   }
 }
 
