@@ -6,6 +6,21 @@ export const DEFAULT_QUOTA_PER_USD = 500000
 /** 硅基流动默认站点地址（base_url 留空时用这个） */
 export const DEFAULT_SILICONFLOW_BASE_URL = 'https://api.siliconflow.cn'
 
+/**
+ * 积分 → 金额折算默认值：多少积分算 1 元。
+ *
+ * 默认 111111，即 **1 元 ≈ 11.11 万积分 / 100 万积分 ≈ 9 元**。
+ * 由来（按 DeepSeek flash **高峰时段**价反推，2025-09 实测口径）：
+ * - 某窗口总 Token 8.3M = 输入 8.1M（缓存命中 7M + 未命中 1.1M）+ 输出 160.6K
+ * - 折人民币 = 7M×0.04 + 1.1M×2 + 0.1606M×8 ≈ 0.28 + 2.20 + 1.28 ≈ 3.76 元
+ *   反推单位成本 ≈ 0.45 元/百万 Token（缓存命中率高时更低，故取 ~0.9 元/百万 Token 作保守上限）
+ * - 平台把 1 元额度记为 10 万级积分，故 1 元 ≈ 11.11 万积分
+ *
+ * 只是**估算基线**（用于把不同单位放到同一把尺子上比较），不是平台官方汇率，
+ * 可在「设置 → 成本折算」里改；设 0 表示不折算。
+ */
+export const DEFAULT_CREDITS_PER_CNY = 111111
+
 /** 全局设置默认值。任何字段缺失/越界都会回落到这里（见 store.ts 的 normalizeSettings） */
 export const DEFAULT_SETTINGS: Settings = {
   refresh_seconds: 300,
@@ -23,6 +38,7 @@ export const DEFAULT_SETTINGS: Settings = {
   daily_budget: {},
   drop_alert_percent: 30,
   fail_alert_count: 3,
+  credits_per_cny: DEFAULT_CREDITS_PER_CNY,
   onboarded: false,
   bg_enabled: false,
   bg_file: '',

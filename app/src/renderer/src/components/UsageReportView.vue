@@ -137,24 +137,41 @@ function makeCard() {
   ctx.fillText(fmtNumber(total.value), 60, 320)
   ctx.fillStyle = '#7f8ca3'
   ctx.font = '600 34px system-ui, "Microsoft YaHei", sans-serif'
+  // 单位行同样防溢出（极端情况下单位名很长）
+  fitFont(ctx, unit.value || ' ', 600, 34, 20, W - 66 - 64)
   ctx.fillText(unit.value || '', 66, 370)
-  // 多单位时把其它单位也印上，避免"只看到积分、以为 CNY 没算"
+  // 下方两行（「其它单位」/「较上期」）**各自独占一行、按行高递推 baseline**：
+  // 修复：以前两行写死 y=370 / 408 / 424，24px 与 30px 字号的字高都超过 16px 间距，字被压在一起。
+  let hy = 370
+  // 行距 46：34px 单位行下面接 24/30px 的小字，留出「字底边 + 空隙」，任何主题下都不会叠
+  const LINE = 46
+  // 多单位时把其它单位也印上，避免"只看到积分、以为 CNY 没算"（每个单位一行，不与下面那行挤同一 baseline）
   if (units.value.length > 1) {
+    hy += LINE
     ctx.fillStyle = '#7f8ca3'
     ctx.font = '600 24px system-ui, "Microsoft YaHei", sans-serif'
     const others = units.value.filter((u) => u.unit !== unit.value).map((u) => u.unit + ' ' + fmtNumber(u.value)).join('　·　')
-    ctx.fillText('其它单位：' + others, 66, 408)
+    // 长文本缩字号后再自动换行，绝不越出画布右边（原来固定 24px 单行，单位一多就被裁掉）
+    fitFont(ctx, '其它单位：' + others, 600, 24, 15, W - 64 - 66)
+    for (const line of wrapText(ctx, '其它单位：' + others, W - 64 - 66)) {
+      ctx.fillText(line, 66, hy)
+      hy += LINE
+    }
+    hy -= LINE
   }
   if (deltaText.value) {
+    hy += LINE
     ctx.fillStyle = deltaText.value.up ? '#ff9d7a' : '#5ee0b0'
     ctx.font = '700 30px system-ui, "Microsoft YaHei", sans-serif'
-    ctx.fillText('较上期 ' + deltaText.value.text, 66, 424)
+    ctx.fillText('较上期 ' + deltaText.value.text, 66, hy)
   }
+  // 数据格起始位置跟着上面实际画了几行往下挪，保证不压字（基线 + 字号底边 + 行距）
+  const gridTop = Math.max(468, hy + 34)
   // 数据格（与页面 hero-grid 共用 statCells，见 script 中定义）
   const cells = statCells.value
   cells.forEach((c, i) => {
     const x = 60 + (i % 2) * 400
-    const y = 500 + Math.floor(i / 2) * 116
+    const y = gridTop + Math.floor(i / 2) * 116
     ctx.fillStyle = 'rgba(255,255,255,0.045)'
     roundRect(ctx, x, y, 360, 96, 18)
     ctx.fill()
@@ -165,13 +182,14 @@ function makeCard() {
     ctx.font = '700 32px system-ui, "Microsoft YaHei", sans-serif'
     ctx.fillText(c.v, x + 26, y + 76)
   })
-  // 平台占比
+  // 平台占比（标题跟着数据格底部走，避免多一行时压到数据格）
+  const shareTop = gridTop + 96 + (Math.ceil(cells.length / 2) - 1) * 116 + 52
   ctx.fillStyle = '#8fb4ff'
   ctx.font = '600 26px system-ui, "Microsoft YaHei", sans-serif'
-  ctx.fillText('消耗构成 · ' + (unit.value || ''), 64, 780)
+  ctx.fillText('消耗构成 · ' + (unit.value || ''), 64, shareTop)
   const shares = (detail.value?.platformShare ?? []).slice(0, 4)
   shares.forEach((s, i) => {
-    const y = 824 + i * 64
+    const y = shareTop + 44 + i * 64
     ctx.fillStyle = '#c9d4e6'
     ctx.font = '500 26px system-ui, "Microsoft YaHei", sans-serif'
     ctx.fillText(typeLabel(s.type), 64, y + 22)
@@ -189,13 +207,13 @@ function makeCard() {
     ctx.font = '600 22px system-ui, "Microsoft YaHei", sans-serif'
     ctx.fillText(s.pct.toFixed(0) + '%', 810, y + 21)
   })
-  // 里程碑
+  // 里程碑：贴着占比区底部往下排，最多 3 行，且不越过页脚基线（H-40）
   const ms = r.milestones.slice(0, 3)
-  // 里程碑上移，与页脚留出安全间距（原来从 y=1100 起会压到 1164 的页脚）
+  const msTop = Math.min(shareTop + 44 + Math.max(1, shares.length) * 64 + 18, H - 40 - ms.length * 34)
   ms.forEach((m, i) => {
     ctx.fillStyle = '#7f8ca3'
     ctx.font = '400 24px system-ui, "Microsoft YaHei", sans-serif'
-    ctx.fillText('· ' + m, 64, 1140 + i * 34)
+    ctx.fillText('· ' + m, 64, msTop + i * 34)
   })
   // 页脚
   ctx.fillStyle = '#4a5568'
@@ -211,6 +229,36 @@ function makeCard() {
   document.body.removeChild(a)
   cardMsg.value = '分享卡片已保存到下载目录 ✓'
   setTimeout(() => { cardMsg.value = '' }, 2600)
+}
+
+/** 缩字号直到整行放得下 maxW（不小于 minPx），返回实际字号（内部已把 ctx.font 设成该字号） */
+function fitFont(ctx: CanvasRenderingContext2D, text: string, weight: number, px: number, minPx: number, maxW: number): void {
+  let size = px
+  const set = (s: number): void => { ctx.font = weight + ' ' + s + 'px system-ui, "Microsoft YaHei", sans-serif' }
+  set(size)
+  // 逐级缩小（1px 一步，最多降到 minPx）：中文一行放不下就缩小，再放不下才交给 wrapText 换行
+  while (size > minPx && ctx.measureText(text).width > maxW) {
+    size -= 1
+    set(size)
+  }
+}
+
+/** 按画布宽度把一行文本拆成多行（优先在分隔符处断，断不开就逐字断），返回每行文本 */
+function wrapText(ctx: CanvasRenderingContext2D, text: string, maxW: number): string[] {
+  if (ctx.measureText(text).width <= maxW) return [text]
+  const lines: string[] = []
+  let cur = ''
+  for (const ch of text) {
+    const next = cur + ch
+    if (cur && ctx.measureText(next).width > maxW) {
+      lines.push(cur)
+      cur = ch
+    } else {
+      cur = next
+    }
+  }
+  if (cur) lines.push(cur)
+  return lines
 }
 
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {

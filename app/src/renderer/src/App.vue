@@ -403,7 +403,7 @@ async function onSettingsSave(patch: Parameters<typeof saveSettings>[0]) {
 
         <UsageStats v-else-if="view === 'usage'" @correct="openCorrection" />
 
-        <PlatformUsage v-else-if="view === 'platform'" />
+        <PlatformUsage v-else-if="view === 'platform'" :settings="settings" />
 
         <KeysView v-else-if="view === 'keys'" :rows="rows" @edit="openEdit" />
 

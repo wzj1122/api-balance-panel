@@ -114,6 +114,7 @@ export function normalizeSettings(raw: unknown): Settings {
     daily_budget: normalizeBudget(src.daily_budget, d.daily_budget),
     drop_alert_percent: clamp(numOr(src.drop_alert_percent, d.drop_alert_percent), 0, 100),
     fail_alert_count: clamp(numOr(src.fail_alert_count, d.fail_alert_count), 0, 50),
+    credits_per_cny: clamp(numOr(src.credits_per_cny, d.credits_per_cny), 0, 1e9),
     onboarded: boolOr(src.onboarded, d.onboarded),
     bg_enabled: boolOr(src.bg_enabled, d.bg_enabled),
     bg_file: typeof src.bg_file === 'string' ? src.bg_file : d.bg_file,

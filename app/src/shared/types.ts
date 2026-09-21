@@ -357,6 +357,10 @@ export interface Settings {
   /** 连续失败多少次后告警（0 = 关闭） */
   fail_alert_count: number
 
+  // ---------- 成本折算 ----------
+  /** 积分 → 金额折算：多少积分算 1 元（0 = 不折算，界面只显示原值） */
+  credits_per_cny: number
+
   // ---------- 新手引导 ----------
   /** 是否已完成首次引导 */
   onboarded: boolean

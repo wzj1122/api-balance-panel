@@ -13,6 +13,20 @@ export function fmtNumber(n: number | null | undefined): string {
   return n.toFixed(a < 1 ? 4 : 2)
 }
 
+/**
+ * 金额格式化（元）：null/NaN → "-"。
+ * 与 fmtNumber 的区别：金额常见小数位（几块钱、几毛钱），所以 <100 一律保留 2 位，
+ * 极小值再补到 4 位，避免一堆折算结果全变成 "0.0000"。
+ */
+export function fmtMoney(n: number | null | undefined): string {
+  if (n === null || n === undefined || !Number.isFinite(n)) return '-'
+  const a = Math.abs(n)
+  if (a >= 1e8) return (n / 1e8).toFixed(2) + ' 亿元'
+  if (a >= 1e4) return (n / 1e4).toFixed(2) + ' 万元'
+  if (a >= 0.01) return n.toFixed(2) + ' 元'
+  return n.toFixed(4) + ' 元'
+}
+
 /** 相对时间：刚刚 / X 秒前 / X 分钟前 / X 小时前（照原型，不引入 dayjs） */
 export function fmtAgo(ts: number | null | undefined, now: number = Date.now()): string {
   if (!ts) return '-'

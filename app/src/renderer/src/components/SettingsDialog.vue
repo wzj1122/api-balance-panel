@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { REFRESH_OPTIONS } from '@shared/constants'
+import { REFRESH_OPTIONS, DEFAULT_CREDITS_PER_CNY } from '@shared/constants'
 import type { AutoStartStatus } from '@shared/ipc'
 import type { AppInfo, Settings } from '@shared/types'
+import { creditsToCny, hasCreditRate, rateText } from '@shared/cost'
+import { fmtMoney } from '@shared/format'
 import { exportBackup, getAutoStartStatus, importBackup, openDataDir } from '@renderer/api/ipc'
 import InfoTip from './InfoTip.vue'
 import SelectMenu from './SelectMenu.vue'
@@ -29,6 +31,8 @@ const local = reactive({
   theme: 'dark' as string,
   drop_alert_percent: 30,
   fail_alert_count: 3,
+  /** 积分 → 金额折算：多少积分算 1 元（0 = 不折算） */
+  credits_per_cny: DEFAULT_CREDITS_PER_CNY,
   daily_budget: {} as Record<string, number>
 })
 
@@ -85,6 +89,7 @@ function init() {
     local.theme = s.theme
     local.drop_alert_percent = s.drop_alert_percent ?? 30
     local.fail_alert_count = s.fail_alert_count ?? 3
+    local.credits_per_cny = s.credits_per_cny ?? DEFAULT_CREDITS_PER_CNY
     local.daily_budget = { ...(s.daily_budget ?? {}) }
   }
   dataDirMsg.value = ''
@@ -118,6 +123,20 @@ function setBudget(unit: string, value: string | number): void {
 
 const refreshOptions = computed(() => REFRESH_OPTIONS.map((o) => ({ value: o, label: refreshLabel(o) })))
 
+/** 折算率的人话解释：输入框里是「多少积分算 1 元」，这里反过来说给用户听 */
+const creditRateLabel = computed(() => rateText(local.credits_per_cny))
+/** 现场算一遍「100 万积分 ≈ ? 元」，让用户填完立刻能核对（按 DeepSeek 高峰价反推时约 9 元） */
+const millionCreditsCny = computed(() => {
+  if (!hasCreditRate(local.credits_per_cny)) return ''
+  const v = creditsToCny(1e6, local.credits_per_cny)
+  return v === null ? '' : '100 万积分 ≈ ' + fmtMoney(v)
+})
+
+/** 一键恢复默认（按 DeepSeek 高峰价反推的估算基线） */
+function resetCreditRate(): void {
+  local.credits_per_cny = DEFAULT_CREDITS_PER_CNY
+}
+
 function refreshLabel(sec: number): string {
   const m = sec / 60
   return Number.isInteger(m) ? m + ' 分钟' : (sec / 60).toFixed(1) + ' 分钟'
@@ -134,6 +153,7 @@ function onSave() {
     theme: local.theme,
     drop_alert_percent: local.drop_alert_percent,
     fail_alert_count: local.fail_alert_count,
+    credits_per_cny: Number.isFinite(local.credits_per_cny) ? Math.max(0, local.credits_per_cny) : 0,
     daily_budget: JSON.parse(JSON.stringify(local.daily_budget ?? {}))
   })
   savedFlash.value = true
@@ -226,6 +246,34 @@ async function onImport() {
             <input v-model.number="local.fail_alert_count" class="input mini" type="number" min="0" max="50" />
             次时提醒（0 = 关闭）
           </span>
+        </div>
+      </div>
+
+      <div class="sec">
+        <div class="sec-title">
+          成本折算
+          <InfoTip text="账号可能用不同单位记账（积分 / 元）。「平台用量」页要把它们放到同一把尺子上比较，就得有一个折算率。默认值按 DeepSeek flash 高峰价反推（输入缓存命中 0.04 / 未命中 2 / 输出 8 元每百万 Token），只是估算基线，不是平台官方汇率。填 0 = 不折算。" />
+        </div>
+        <div class="field-inline">
+          <span class="f-label">积分折算率</span>
+          <span class="inline-input">
+            <input
+              v-model.number="local.credits_per_cny"
+              class="input rate-input"
+              type="number"
+              min="0"
+              step="1000"
+              placeholder="0 = 不折算"
+            />
+            积分 = 1 元
+            <button class="btn ghost mini" type="button" @click="resetCreditRate">恢复默认</button>
+          </span>
+        </div>
+        <div class="hint">
+          {{ creditRateLabel }}<template v-if="millionCreditsCny">（{{ millionCreditsCny }}）</template>。
+          默认 111111 是按 DeepSeek flash 高峰价反推的估算：某窗口 8.1M 输入（缓存命中 7M）+ 160.6K 输出 ≈ 3.76 元，
+          折算约 0.45 元/百万 Token，取 ~0.9 元/百万 Token 作保守上限 → 100 万积分 ≈ 9 元。
+          这个数只影响「折合人民币（估算）」列与对比条排序，<strong>不会改动任何原始数据</strong>。
         </div>
       </div>
 
@@ -351,6 +399,8 @@ async function onImport() {
 .f-label { font-size: var(--fs-sub); color: var(--tx2); font-weight: 500; min-width: 128px; flex: none; }
 .inline-input { font-size: var(--fs-sub); color: var(--tx2); display: inline-flex; align-items: center; gap: 6px; }
 .input.mini { width: 120px; }
+/* 积分折算率：数值有 6 位以上，输入框要宽一点 */
+.rate-input { width: 150px; }
 .hint { font-size: var(--fs-foot); color: var(--tx3); margin: 4px 0 8px; line-height: 1.7; }
 .hint-inline { font-size: var(--fs-foot); color: var(--tx3); line-height: 1.7; }
 .hint.err-hint { color: var(--warn); }

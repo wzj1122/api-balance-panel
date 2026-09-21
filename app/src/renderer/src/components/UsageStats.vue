@@ -18,6 +18,9 @@ const selectedTs = ref<number | null>(null)
 /** 跳到「数据校正」页（带着账号）——历史数据不对时一步到位 */
 const emit = defineEmits<{ (e: 'correct', accountId: string): void }>()
 
+/** 逐日列的表头说明（所有日期列共用）：讲清「黄 / 充值 / —」分别代表什么 */
+const DAY_COL_TIP = '逐日消耗。写着「充值」= 当天余额反而增加（疑似充值），当日消耗算不出来；「—」= 该日没有采样数据。'
+
 /** 弹窗：某一天各账号用量明细（从已拉取的报告里索引） */
 const selectedDay = computed(() => {
   const ts = selectedTs.value
@@ -135,6 +138,27 @@ function typeLabel(t: string): string {
   return m?.label ?? t
 }
 
+/**
+ * 逐日单元格的悬浮说明：把「为什么这格是黄的 / 为什么写『充值』」讲到具体数字。
+ * 之前只有颜色没有说明，用户看不出黄色有什么特殊含义。
+ */
+function dayCellTitle(a: DailyAccount, i: number, v: number | null): string {
+  const day = report.value?.days[i]?.label ?? ''
+  const parts: string[] = [day]
+  const gap = a.gapDays?.[i] ?? null
+  if (a.rechargeFlags[i]) {
+    parts.push('疑似充值：当天余额反而增加，当日消耗无法计算，这一格不代表用量')
+  } else if (v === null) {
+    parts.push('该日没有采样数据')
+  } else {
+    parts.push('消耗 ' + fmtNumber(v) + ' ' + (a.unit || ''))
+  }
+  if (gap !== null && gap !== undefined && gap > 0) {
+    parts.push('停机期间另有 ' + fmtNumber(gap) + ' ' + (a.unit || '') + '（软件未运行，无法按天归属，已计入「合计（含停机）」）')
+  }
+  return parts.join(' · ')
+}
+
 function fcastCell(a: DailyAccount): { text: string; cls: string } {
   if (a.forecastDaysLeft === null || a.forecastDaysLeft === undefined) return { text: '—', cls: '' }
   if (a.forecastDaysLeft > 365) return { text: '余量充足', cls: 'ok' }
@@ -239,6 +263,14 @@ function exportCsv() {
           <span class="muted">已<strong>计入下方「合计（含停机）」</strong>，但不计入日均、耗尽预估与预算判断。</span>
         </div>
 
+        <!-- 表格里的黄色数字到底代表什么：以前只有颜色、没有任何说明，看着像随机标黄 -->
+        <div class="tbl-legend">
+          <span class="lg-title">表格颜色说明</span>
+          <span class="lg-item"><i class="lg-dot gap-dot"></i>黄色 = <b>停机期间</b>消耗（软件没运行的那段，无法算到某一天）</span>
+          <span class="lg-item"><i class="lg-dot recharge-dot"></i>橙色「充值」 = 那天余额反而涨了（疑似充值），<b>当日消耗算不出来</b></span>
+          <span class="lg-item"><i class="lg-dot fcast-dot"></i>预计耗尽：<b>红</b> &lt; 3 天 · <b>黄</b> &lt; 14 天 · <b>绿</b> 余量充足</span>
+        </div>
+
         <div class="charts">
           <div v-for="bc in barCharts" :key="bc.unit" class="chart-card">
             <div class="chart-title">
@@ -267,7 +299,7 @@ function exportCsv() {
               <tr>
                 <th class="tl">账号</th>
                 <th>剩余</th>
-                <th v-for="(d, i) in report.days" :key="d.ts">{{ d.label }}</th>
+                <th v-for="(d, i) in report.days" :key="d.ts" :title="DAY_COL_TIP">{{ d.label }}</th>
                 <th>今日</th>
                 <th title="近 7 天有效日的日均消耗（不含停机期间）">7日均</th>
                 <th title="软件未运行期间的余额下降；已计入下方「合计」，但不计入日均与耗尽预估">停机期间</th>
@@ -284,7 +316,13 @@ function exportCsv() {
                   <button class="link-btn" type="button" title="这一天的数据不对？去「数据校正」页修改" @click="emit('correct', a.accountId)">校正</button>
                 </td>
                 <td class="num">{{ fmtNumber(a.remaining) }} <span class="muted">{{ a.unit }}</span></td>
-                <td v-for="(v, i) in a.days" :key="i" class="num" :class="{ dim: v === null, recharge: a.rechargeFlags[i] }">
+                <td
+                  v-for="(v, i) in a.days"
+                  :key="i"
+                  class="num"
+                  :class="{ dim: v === null, recharge: a.rechargeFlags[i] }"
+                  :title="dayCellTitle(a, i, v)"
+                >
                   {{ v === null ? (a.rechargeFlags[i] ? '充值' : '—') : fmtNumber(v) }}
                 </td>
                 <td class="num today">{{ a.today === null ? '—' : fmtNumber(a.today) }}</td>
@@ -410,6 +448,8 @@ function exportCsv() {
 .usage-table td.dim { color: var(--tx3); }
 .usage-table td.today { font-weight: 700; color: var(--acc); }
 .usage-table td.recharge { color: var(--warn); font-weight: 600; font-size: 11.5px; }
+/* 充值日：黄色 + 下划虚线，和「停机期间」的纯黄色区分开（两种情况都是黄，但不是一回事） */
+.usage-table td.recharge { text-decoration: underline dotted var(--warn); text-underline-offset: 3px; }
 .usage-table td.suggested { color: var(--tx2); }
 .usage-table td.num { font-variant-numeric: tabular-nums; }
 .usage-table td.strong { font-weight: 700; color: var(--tx); }
@@ -430,6 +470,15 @@ function exportCsv() {
 }
 .gap-ico { font-size: 13px; }
 .gap-val { color: var(--warn); font-variant-numeric: tabular-nums; }
+/* 表格颜色说明（黄 = 停机期间 / 橙「充值」/ 预计耗尽档位），把颜色的语义写清楚 */
+.tbl-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; margin: 0 0 12px; font-size: var(--fs-foot); color: var(--tx3); }
+.tbl-legend .lg-title { font-weight: 600; color: var(--tx2); }
+.tbl-legend .lg-item { display: inline-flex; align-items: center; gap: 6px; }
+.tbl-legend .lg-item b { font-weight: 600; }
+.lg-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: none; }
+.lg-dot.gap-dot { background: var(--warn); }
+.lg-dot.recharge-dot { background: var(--warn); box-shadow: 0 0 0 2px var(--warn-soft, rgba(255, 176, 32, 0.18)); }
+.lg-dot.fcast-dot { background: var(--err); box-shadow: 0 0 0 2px var(--warn-soft, rgba(255, 176, 32, 0.18)); }
 .usage-table tfoot td { border-bottom: none; background: var(--acc-soft); }
 .acc-name { display: block; font-weight: 600; color: var(--tx); }
 .muted { color: var(--tx3); font-size: var(--fs-foot); }
