@@ -13,6 +13,7 @@ import UsageStats from '@renderer/components/UsageStats.vue'
 import KeysView from '@renderer/components/KeysView.vue'
 import LogView from '@renderer/components/LogView.vue'
 import ThemeView from '@renderer/components/ThemeView.vue'
+import CorrectionView from '@renderer/components/CorrectionView.vue'
 import PlatformUsage from '@renderer/components/PlatformUsage.vue'
 import HelpPane from '@renderer/components/HelpPane.vue'
 import UsageReportView from '@renderer/components/UsageReportView.vue'
@@ -54,6 +55,14 @@ const showOnboard = ref(false)
 const renewingIds = ref<Set<string>>(new Set())
 /** 续期结果提示（顶部小字，几秒后自动消失） */
 const renewMsg = ref('')
+/** 跳到「数据校正」页时预选的账号 */
+const correctionAccountId = ref('')
+
+/** 打开数据校正页（可带账号预选）：其它页面的「校正」入口统一走这里 */
+function openCorrection(accountId?: string): void {
+  correctionAccountId.value = accountId ?? ''
+  view.value = 'correction'
+}
 
 /**
  * 静默续期登录：用已保存的会话自动换新凭据（不弹窗、不需要密码）。
@@ -381,6 +390,7 @@ async function onSettingsSave(patch: Parameters<typeof saveSettings>[0]) {
                       :forecast="forecastMap?.get(row.accountId) ?? null"
                       @refresh="refreshOne"
                       @renew="onRenew"
+                      @correct="openCorrection(row.accountId)"
                       @edit="openEdit"
                       @remove="onRemove"
                     />
@@ -391,7 +401,7 @@ async function onSettingsSave(patch: Parameters<typeof saveSettings>[0]) {
           </template>
         </template>
 
-        <UsageStats v-else-if="view === 'usage'" />
+        <UsageStats v-else-if="view === 'usage'" @correct="openCorrection" />
 
         <PlatformUsage v-else-if="view === 'platform'" />
 
@@ -404,6 +414,12 @@ async function onSettingsSave(patch: Parameters<typeof saveSettings>[0]) {
         <LogView v-else-if="view === 'logs'" />
 
         <ThemeView v-else-if="view === 'theme'" :settings="settings" @save="onSettingsSave" />
+
+        <CorrectionView
+          v-else-if="view === 'correction'"
+          :accounts="accounts"
+          :initial-account-id="correctionAccountId"
+        />
 
         <SettingsDialog
           v-else-if="view === 'settings'"

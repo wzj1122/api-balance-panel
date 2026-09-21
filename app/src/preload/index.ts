@@ -6,6 +6,7 @@ import type {
   AccountView,
   AppInfo,
   BalanceRow,
+  CorrectionView,
   DailyUsageReport,
   FxInfo,
   KeyBulkAction,
@@ -239,6 +240,33 @@ const api: PanelApi = {
     return () => {
       ipcRenderer.removeListener(IPC.BALANCE_UPDATED, listener)
     }
+  },
+
+  /** 数据校正：读某账号的校正视图 */
+  correctionView(payload: { accountId: string; limit?: number }): Promise<CorrectionView> {
+    return ipcRenderer.invoke(IPC.CORRECTION_VIEW, payload)
+  },
+
+  /** 数据校正：新增（改某天用量 / 平移 / 设为指定值） */
+  correctionApply(payload: {
+    accountId: string
+    mode: 'day' | 'set' | 'offset'
+    fromTs?: number
+    dayTs?: number
+    value: number
+    note?: string
+  }): Promise<{ ok: boolean; correctionId: string; offset: number; message: string }> {
+    return ipcRenderer.invoke(IPC.CORRECTION_APPLY, payload)
+  },
+
+  /** 数据校正：撤销一条 */
+  correctionRemove(id: string): Promise<{ ok: boolean }> {
+    return ipcRenderer.invoke(IPC.CORRECTION_REMOVE, { id })
+  },
+
+  /** 数据校正：清空某账号全部校正 */
+  correctionClear(accountId: string): Promise<{ ok: boolean; removed: number }> {
+    return ipcRenderer.invoke(IPC.CORRECTION_CLEAR, { accountId })
   }
 }
 

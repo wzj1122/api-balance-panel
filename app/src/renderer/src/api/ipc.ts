@@ -5,6 +5,7 @@ import type {
   AccountView,
   AppInfo,
   BalanceRow,
+  CorrectionView,
   DailyUsageReport,
   FxInfo,
   KeyBulkAction,
@@ -84,6 +85,20 @@ export async function safeInvoke<T = unknown>(
         break
       case IPC.ACCOUNT_RENEW:
         res = await api.renewAccount((payload as { id: string }).id)
+        break
+      case IPC.CORRECTION_VIEW:
+        res = await api.correctionView(payload as { accountId: string; limit?: number })
+        break
+      case IPC.CORRECTION_APPLY:
+        res = await api.correctionApply(
+          payload as { accountId: string; mode: 'day' | 'set' | 'offset'; fromTs?: number; dayTs?: number; value: number; note?: string }
+        )
+        break
+      case IPC.CORRECTION_REMOVE:
+        res = await api.correctionRemove((payload as { id: string }).id)
+        break
+      case IPC.CORRECTION_CLEAR:
+        res = await api.correctionClear((payload as { accountId: string }).accountId)
         break
       case IPC.FX_GET:
         res = await api.getFx()
@@ -235,6 +250,35 @@ export async function loginSite(
 /** 静默续期登录（用保存的会话换新凭据，不弹窗） */
 export async function renewAccount(id: string): Promise<RpcResult<{ ok: boolean; error: string; needLogin: boolean; expiresAt: number | null }>> {
   return safeInvoke<{ ok: boolean; error: string; needLogin: boolean; expiresAt: number | null }>(IPC.ACCOUNT_RENEW, { id })
+}
+
+// ---------- 数据校正 ----------
+
+/** 读某账号的校正视图 */
+export async function correctionView(accountId: string, limit = 400): Promise<RpcResult<CorrectionView>> {
+  return safeInvoke<CorrectionView>(IPC.CORRECTION_VIEW, { accountId, limit })
+}
+
+/** 新增校正：改某天用量 / 平移 / 设为指定值 */
+export async function correctionApply(payload: {
+  accountId: string
+  mode: 'day' | 'set' | 'offset'
+  fromTs?: number
+  dayTs?: number
+  value: number
+  note?: string
+}): Promise<RpcResult<{ ok: boolean; correctionId: string; offset: number; message: string }>> {
+  return safeInvoke<{ ok: boolean; correctionId: string; offset: number; message: string }>(IPC.CORRECTION_APPLY, payload)
+}
+
+/** 撤销一条校正 */
+export async function correctionRemove(id: string): Promise<RpcResult<{ ok: boolean }>> {
+  return safeInvoke<{ ok: boolean }>(IPC.CORRECTION_REMOVE, { id })
+}
+
+/** 清空某账号的全部校正（一键还原） */
+export async function correctionClear(accountId: string): Promise<RpcResult<{ ok: boolean; removed: number }>> {
+  return safeInvoke<{ ok: boolean; removed: number }>(IPC.CORRECTION_CLEAR, { accountId })
 }
 
 /** 取实时汇率（成本折算用） */

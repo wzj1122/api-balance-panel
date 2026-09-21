@@ -2,7 +2,7 @@ import { app, ipcMain, Notification, session, shell } from 'electron'
 import { MIMO_BALANCE_URL, SENSENOVA_TOKEN_KEY } from '../shared/constants'
 import { IPC } from '../shared/ipc'
 import type { RefreshPayload } from '../shared/ipc'
-import type { AccountInput, AppInfo, CredentialSession, MonitorInput, ReportPeriod, Settings, LogLevel, KeyVaultInput } from '../shared/types'
+import type { AccountInput, AppInfo, CorrectionView, CredentialSession, MonitorInput, ReportPeriod, Settings, LogLevel, KeyVaultInput } from '../shared/types'
 import { applyAutoStart, getAutoStartStatus } from './autostart'
 import { backgroundData, backgroundForTheme, importBackground, listBackgrounds, removeBackground } from './bgstore'
 import { exportBackup, importBackup } from './backup'
@@ -20,7 +20,8 @@ import { jwtExpiry, supportsRenewal } from './renewal'
 import { closeWindow, isWindowMaximized, minimizeWindow, toggleMaximizeWindow } from './window'
 import { scheduler } from './scheduler'
 import { buildDailyUsage, buildPlatformUsage, buildUsageReport } from './usage'
-import { listByAccount, removeByAccount } from './snapshot'
+import { listByAccount, readSnapshotsRaw, removeByAccount } from './snapshot'
+import { addCorrection, applyCorrections, clearCorrections, listCorrections, removeCorrection } from './corrections'
 import { store, toView } from './store'
 
 /**
@@ -297,6 +298,149 @@ export function registerIpc(): void {
     }
     invalidateCache(id)
     return { ok: true, error: '', needLogin: false, expiresAt: after?.token_expires_at ?? null }
+  })
+
+  // ---------- 数据校正（手动修正历史数据） ----------
+
+  // 读某账号的校正视图：账本 + 每条影响多少快照 + 校正前后对照点
+  wrap(IPC.CORRECTION_VIEW, async (payload) => {
+    const p = asRecord(payload) as { accountId?: string; limit?: number }
+    const accountId = typeof p.accountId === 'string' ? p.accountId : ''
+    if (!accountId) throw new Error('缺少账号 id')
+    const account = store.getAccount(accountId)
+    if (!account) throw new Error('账号不存在')
+    const limit = typeof p.limit === 'number' && p.limit > 0 ? Math.min(Math.round(p.limit), 2000) : 400
+
+    const raw = (await readSnapshotsRaw()).filter((s) => s.account_id === accountId).sort((a, b) => a.ts - b.ts)
+    const corrected = applyCorrections(raw, accountId)
+    const list = listCorrections(accountId)
+    const affected: Record<string, number> = {}
+    for (const c of list) affected[c.id] = raw.filter((s) => s.ts >= c.fromTs).length
+
+    const points: CorrectionView['points'] = corrected.slice(-limit).map((s, i) => {
+      const src = raw[raw.length - Math.min(limit, corrected.length) + i]
+      return {
+        ts: s.ts,
+        remaining: s.remaining ?? null,
+        raw: src?.remaining ?? null,
+        adjusted: Boolean(s.adjusted)
+      }
+    })
+    const lastOffset = list.filter((c) => c.kind === 'offset').reduce((a, c) => a + c.value, 0)
+    const lastSet = list.filter((c) => c.kind === 'set').sort((a, b) => b.fromTs - a.fromTs)[0]?.value ?? null
+    return {
+      accountId,
+      name: account.name,
+      type: account.type,
+      unit: account.unit ?? '',
+      offset: Math.round(lastOffset * 1e6) / 1e6,
+      setValue: lastSet,
+      corrections: list,
+      points,
+      affected
+    } satisfies CorrectionView
+  })
+
+  // 新增校正：三种模式都归一化成"从某一时刻起的安全操作"
+  wrap(IPC.CORRECTION_APPLY, async (payload) => {
+    const p = asRecord(payload) as {
+      accountId?: string
+      mode?: string
+      fromTs?: number
+      dayTs?: number
+      value?: number
+      note?: string
+    }
+    const accountId = typeof p.accountId === 'string' ? p.accountId : ''
+    if (!accountId) throw new Error('缺少账号 id')
+    const account = store.getAccount(accountId)
+    if (!account) throw new Error('账号不存在')
+    const mode = p.mode === 'day' || p.mode === 'set' ? p.mode : 'offset'
+    const value = Number(p.value)
+    if (!Number.isFinite(value)) throw new Error('数值不合法')
+    const note = typeof p.note === 'string' ? p.note : ''
+
+    // 模式①：改某天的用量 → 换算成"从那天 00:00 起平移 delta"
+    if (mode === 'day') {
+      const dayTs = Number(p.dayTs)
+      if (!Number.isFinite(dayTs)) throw new Error('缺少日期')
+      const dayStart = new Date(dayTs)
+      dayStart.setHours(0, 0, 0, 0)
+      const fromTs = dayStart.getTime()
+      const toTs = fromTs + 24 * 60 * 60 * 1000
+      const raw = (await readSnapshotsRaw()).filter((s) => s.account_id === accountId).sort((a, b) => a.ts - b.ts)
+      const corrected = applyCorrections(raw, accountId)
+      const inDay = corrected.filter((s) => s.ts >= fromTs && s.ts < toTs && s.remaining !== null)
+      if (inDay.length === 0) throw new Error('这一天没有该账号的快照，无法修改')
+      // 该日用量 = 当日基准（前一条快照）− 当日最后一条
+      const before = corrected.filter((s) => s.ts < fromTs && s.remaining !== null).slice(-1)[0] ?? null
+      const firstVal = inDay[0].remaining as number
+      const lastVal = inDay[inDay.length - 1].remaining as number
+      const base = before ? (before.remaining as number) : firstVal
+      const current = Math.round(Math.max(0, base - lastVal) * 1e6) / 1e6
+      // 目标用量 → 需要的平移量：base 与 lastVal 同时平移 delta ⇒ 用量减少 delta
+      const delta = Math.round((current - value) * 1e6) / 1e6
+      if (delta === 0) {
+        return { ok: true, correctionId: '', offset: 0, message: '数值与当前一致，无需校正' }
+      }
+      const item = addCorrection({
+        accountId,
+        fromTs,
+        kind: 'offset',
+        value: delta,
+        unit: account.unit ?? '',
+        note: note || `把 ${new Date(fromTs).toLocaleDateString('zh-CN')} 的用量改为 ${value}`
+      })
+      invalidateCache(accountId)
+      return {
+        ok: true,
+        correctionId: item.id,
+        offset: delta,
+        message: `已把 ${new Date(fromTs).toLocaleDateString('zh-CN')} 的用量从 ${current} 改为 ${value}（该日起整体平移 ${delta}）`
+      }
+    }
+
+    const fromTs = Number(p.fromTs)
+    if (!Number.isFinite(fromTs)) throw new Error('缺少生效时间')
+    const item = addCorrection({
+      accountId,
+      fromTs,
+      kind: mode === 'set' ? 'set' : 'offset',
+      value,
+      unit: account.unit ?? '',
+      note:
+        note ||
+        (mode === 'set'
+          ? `从 ${new Date(fromTs).toLocaleString('zh-CN')} 起剩余设为 ${value}`
+          : `从 ${new Date(fromTs).toLocaleString('zh-CN')} 起平移 ${value}`)
+    })
+    invalidateCache(accountId)
+    return {
+      ok: true,
+      correctionId: item.id,
+      offset: mode === 'offset' ? value : 0,
+      message: mode === 'set' ? '已按指定值校正' : `已从该时刻起整体平移 ${value}`
+    }
+  })
+
+  // 撤销一条校正
+  wrap(IPC.CORRECTION_REMOVE, async (payload) => {
+    const p = asRecord(payload) as { id?: string }
+    const id = typeof p.id === 'string' ? p.id : ''
+    if (!id) throw new Error('缺少校正 id')
+    const ok = removeCorrection(id)
+    invalidateCache()
+    return { ok }
+  })
+
+  // 清空某账号的全部校正（一键还原）
+  wrap(IPC.CORRECTION_CLEAR, async (payload) => {
+    const p = asRecord(payload) as { accountId?: string }
+    const accountId = typeof p.accountId === 'string' ? p.accountId : ''
+    if (!accountId) throw new Error('缺少账号 id')
+    const removed = clearCorrections(accountId)
+    invalidateCache(accountId)
+    return { ok: true, removed }
   })
 
   // 每日使用状况统计（主进程按快照聚合，返回报告）

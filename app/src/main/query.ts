@@ -2,6 +2,7 @@ import { IPC } from '../shared/ipc'
 import type { RefreshPayload } from '../shared/ipc'
 import type { Account, BalanceResult, BalanceRow, CredentialSession, PanelPayload } from '../shared/types'
 import { getAdapter } from './adapters'
+import { totalOffset } from './corrections'
 import { AdapterError, failResult, mapFetchError } from './errors'
 import { logger } from './logger'
 import { maybeNotify } from './notify'
@@ -117,6 +118,26 @@ async function queryAccount(accountInput: Account, force: boolean): Promise<Bala
     }
   }
   result.latencyMs = Date.now() - started
+
+  // 手动校正：卡片实时数字也套用同一套校正（否则刷新后又会显示平台那个错值）
+  const adjust = totalOffset(account.id)
+  if (adjust !== 0) {
+    const shift = (v: number | null | undefined): number | null =>
+      v === null || v === undefined || !Number.isFinite(v) ? (v ?? null) : Math.round((v + adjust) * 1e6) / 1e6
+    result = {
+      ...result,
+      remaining: shift(result.remaining),
+      total: shift(result.total),
+      used: result.used === null || result.used === undefined ? result.used : Math.round((result.used - adjust) * 1e6) / 1e6,
+      items: (result.items ?? []).map((it) => ({
+        ...it,
+        remaining: shift(it.remaining),
+        total: shift(it.total),
+        used: it.used === null || it.used === undefined ? it.used : Math.round((it.used - adjust) * 1e6) / 1e6
+      })),
+      note: (result.note ? result.note + ' · ' : '') + '已手动校正 ' + (adjust > 0 ? '+' : '') + adjust
+    }
+  }
 
   const threshold =
     account.threshold ??

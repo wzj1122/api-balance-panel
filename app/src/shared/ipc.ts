@@ -3,6 +3,7 @@ import type {
   AccountView,
   AppInfo,
   BalanceRow,
+  CorrectionView,
   KeyBulkAction,
   KeyListReport,
   KeyVaultInput,
@@ -50,6 +51,14 @@ export const IPC = {
   ACCOUNT_LOGIN: 'account:login',
   /** invoke：静默续期登录（用保存的会话换新凭据，不弹窗、不需要密码） */
   ACCOUNT_RENEW: 'account:renew',
+  /** invoke：读某账号的校正视图（账本 + 影响条数 + 快照对照） */
+  CORRECTION_VIEW: 'correction:view',
+  /** invoke：新增校正（改某天用量 / 平移 / 回退到某次快照） */
+  CORRECTION_APPLY: 'correction:apply',
+  /** invoke：撤销一条校正 */
+  CORRECTION_REMOVE: 'correction:remove',
+  /** invoke：清空某账号的全部校正（一键还原） */
+  CORRECTION_CLEAR: 'correction:clear',
   /** invoke：取实时汇率（成本折算用，只发货币代码，不带账号信息） */
   FX_GET: 'fx:get',
   /** invoke：取某账号的余额快照（趋势图用） */
@@ -154,6 +163,30 @@ export interface PanelApi {
 
   /** 静默续期登录：用保存的会话换新凭据（不弹窗、不需要密码）；失败说明会话已彻底失效 */
   renewAccount(id: string): Promise<{ ok: boolean; error: string; needLogin: boolean; expiresAt: number | null }>
+
+  /** 读某账号的校正视图（账本条目 + 每条影响的快照数 + 快照对照点） */
+  correctionView(payload: { accountId: string; limit?: number }): Promise<CorrectionView>
+
+  /**
+   * 新增校正：
+   * - mode='day'   ：把某天（accountId 账号）的用量改成 value（自动换算成该日期起平移多少）
+   * - mode='set'   ：从 fromTs 起把剩余设为 value
+   * - mode='offset'：从 fromTs 起整体平移 value
+   */
+  correctionApply(payload: {
+    accountId: string
+    mode: 'day' | 'set' | 'offset'
+    fromTs?: number
+    dayTs?: number
+    value: number
+    note?: string
+  }): Promise<{ ok: boolean; correctionId: string; offset: number; message: string }>
+
+  /** 撤销一条校正 */
+  correctionRemove(id: string): Promise<{ ok: boolean }>
+
+  /** 清空某账号的全部校正（一键还原） */
+  correctionClear(accountId: string): Promise<{ ok: boolean; removed: number }>
   /** 取实时汇率（成本折算用） */
   getFx(): Promise<FxInfo>
   /** 取某账号的余额快照（趋势图用） */

@@ -22,7 +22,12 @@ const emit = defineEmits<{
   (e: 'remove', id: string): void
   /** 静默续期登录（用保存的会话换新凭据） */
   (e: 'renew', id: string): void
+  /** 跳到「数据校正」页（带该账号） */
+  (e: 'correct', id: string): void
 }>()
+
+/** 卡片备注里带「已手动校正」时给个小标记（点了直接去校正页） */
+const adjusted = computed(() => /已手动校正/.test(props.row.note ?? ''))
 
 /** 支持静默续期的平台（登录型）：商汤 / 小米 MiMo */
 const RENEWABLE = new Set<AccountType>(['sensenova', 'mimo', 'mimo-plan'])
@@ -268,6 +273,20 @@ async function toggleTrend(): Promise<void> {
             <path
               fill="currentColor"
               d="M8 3a5 5 0 1 0 4.6 3H11a3.5 3.5 0 1 1-.9-2.3L9.2 4.4H12V2L9.6 2.2A5 5 0 0 0 8 3Z"
+            />
+          </svg>
+        </button>
+        <button
+          v-if="adjusted"
+          class="icon-btn warn-ico"
+          type="button"
+          title="该账号数据已手动校正，点这里去「数据校正」页查看/撤销"
+          @click="emit('correct', row.accountId)"
+        >
+          <svg class="ico" viewBox="0 0 16 16" width="14" height="14">
+            <path
+              fill="currentColor"
+              d="M8 1.6 15 14H1L8 1.6Zm0 3.9-4.4 7.9h8.8L8 5.5Zm-.8 2.2h1.6v3.4H7.2V7.7Zm0 4.2h1.6v1.6H7.2v-1.6Z"
             />
           </svg>
         </button>
@@ -521,6 +540,16 @@ async function toggleTrend(): Promise<void> {
 .icon-btn.active {
   color: var(--card-acc, var(--acc));
   background: var(--acc-soft);
+}
+
+/* 已手动校正的提示按钮：用警示色，点它去「数据校正」页 */
+.icon-btn.warn-ico {
+  color: var(--warn);
+}
+
+.icon-btn.warn-ico:hover:not(:disabled) {
+  color: var(--warn);
+  background: var(--warn-soft);
 }
 
 .balance {

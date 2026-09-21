@@ -1,5 +1,5 @@
 <script setup lang="ts">
-export type SidebarView = 'dashboard' | 'usage' | 'platform' | 'keys' | 'report' | 'logs' | 'theme' | 'settings' | 'help'
+export type SidebarView = 'dashboard' | 'usage' | 'platform' | 'keys' | 'report' | 'logs' | 'theme' | 'settings' | 'help' | 'correction'
 
 defineProps<{
   view: SidebarView
@@ -17,6 +17,7 @@ const items: { id: SidebarView; label: string; icon: string }[] = [
   { id: 'platform', label: '平台用量', icon: 'M4 19V9h3v10H4zM10.5 19V5h3v14h-3zM17 19v-7h3v7h-3z' },
   { id: 'keys', label: 'Key 管理', icon: 'M12.6 2a5.4 5.4 0 0 0-5.2 4H5.2A2.2 2.2 0 0 0 3 8.2v9.6A2.2 2.2 0 0 0 5.2 20h9.6a2.2 2.2 0 0 0 2.2-2.2v-2.2h-.9a3.4 3.4 0 0 1 0-6.8h.9V6.2A2.2 2.2 0 0 0 14.8 4h-1.1A5.4 5.4 0 0 0 12.6 2Zm0 2.2a3.2 3.2 0 1 1 0 6.4 3.2 3.2 0 0 1 0-6.4Zm4.6 6.6h3.2a1 1 0 0 1 0 2h-3.2a1 1 0 0 1 0-2Z' },
   { id: 'report', label: '使用报告', icon: 'M6 2h9l5 5v15H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Zm8 1.5V8h4.5L14 3.5ZM8 12h8v1.8H8V12Zm0 4h8v1.8H8V16Zm0-8h4v1.8H8V8Z' },
+  { id: 'correction', label: '数据校正', icon: 'M3 17.2 8.6 11l3.2 3.2L21 5l-1.8-1.6-7.3 7.6-3.2-3.2L1 17.2l2 0ZM4 19h16v2H4v-2Z' },
   { id: 'logs', label: '运行日志', icon: 'M5 2h14a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1Zm2.5 4v1.8h9V6h-9Zm0 4v1.8h9V10h-9Zm0 4v1.8h5.5V14H7.5Z' },
   { id: 'theme', label: '主题外观', icon: 'M12 2.6a9.4 9.4 0 0 0 0 18.8c1.2 0 2-.8 2-1.9 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.2 0-1 .8-1.8 1.9-1.8h1.4A4.7 4.7 0 0 0 21 10.6C21 6.2 17 2.6 12 2.6Zm-5 9.2a1.4 1.4 0 1 1 0-2.8 1.4 1.4 0 0 1 0 2.8Zm2.6-3.6a1.4 1.4 0 1 1 0-2.8 1.4 1.4 0 0 1 0 2.8Zm4.8 0a1.4 1.4 0 1 1 0-2.8 1.4 1.4 0 0 1 0 2.8Zm2.6 3.6a1.4 1.4 0 1 1 0-2.8 1.4 1.4 0 0 1 0 2.8Z' },
   { id: 'settings', label: '设置', icon: 'M8 10.5A2.5 2.5 0 1 0 8 5.5a2.5 2.5 0 0 0 0 5Zm6.3-2a4.7 4.7 0 0 0-.1-.9l1.4-1.1-1.4-2.4-1.6.7q-.5-.4-1.1-.6L10.9.6H8.4l-.4 1.8q-.6.2-1.1.6l-1.6-.7-1.4 2.4 1.4 1.1q-.1.4-.1.9t.1.9l-1.4 1.1 1.4 2.4 1.6-.7q.5.4 1.1.6l.4 1.8h2.5l.4-1.8q.6-.2 1.1-.6l1.6.7 1.4-2.4-1.4-1.1q.1-.4.1-.9Z' },

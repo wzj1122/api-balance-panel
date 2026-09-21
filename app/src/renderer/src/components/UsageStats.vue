@@ -15,6 +15,9 @@ const range = ref<7 | 30>(7)
 const exporting = ref(false)
 const selectedTs = ref<number | null>(null)
 
+/** 跳到「数据校正」页（带着账号）——历史数据不对时一步到位 */
+const emit = defineEmits<{ (e: 'correct', accountId: string): void }>()
+
 /** 弹窗：某一天各账号用量明细（从已拉取的报告里索引） */
 const selectedDay = computed(() => {
   const ts = selectedTs.value
@@ -278,6 +281,7 @@ function exportCsv() {
                 <td class="tl">
                   <span class="acc-name">{{ a.name }}</span>
                   <span class="muted">{{ typeLabel(a.type) }}</span>
+                  <button class="link-btn" type="button" title="这一天的数据不对？去「数据校正」页修改" @click="emit('correct', a.accountId)">校正</button>
                 </td>
                 <td class="num">{{ fmtNumber(a.remaining) }} <span class="muted">{{ a.unit }}</span></td>
                 <td v-for="(v, i) in a.days" :key="i" class="num" :class="{ dim: v === null, recharge: a.rechargeFlags[i] }">
@@ -432,6 +436,20 @@ function exportCsv() {
 .hint-box { margin: 30px auto; max-width: 520px; text-align: center; color: var(--tx3); font-size: var(--fs-sub); line-height: 1.8; padding: 22px; background: var(--card); border: 1px dashed var(--line-strong); border-radius: 14px; }
 .hint-box.err { color: var(--err); border-color: var(--err-line); }
 .note-line { margin-top: 14px; font-size: var(--fs-foot); color: var(--tx3); }
+
+/* 「校正」小链接：跳到数据校正页 */
+.link-btn {
+  margin-left: 8px;
+  background: transparent;
+  border: none;
+  color: var(--acc);
+  font-size: 11.5px;
+  cursor: pointer;
+  padding: 1px 6px;
+  border-radius: 6px;
+  transition: background var(--dur) ease;
+}
+.link-btn:hover { background: var(--acc-soft); }
 
 .day-detail { font-size: var(--fs-sub); }
 .dd-head { font-size: 15px; font-weight: 700; color: var(--tx-strong); margin-bottom: 12px; display: flex; align-items: baseline; gap: 10px; }

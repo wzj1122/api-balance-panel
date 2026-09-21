@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import { DEFAULT_SETTINGS } from '../shared/constants'
 import type { BalanceRow, Snapshot, SnapshotItem } from '../shared/types'
+import { applyCorrections } from './corrections'
 import { demoSnapshots, isDemo } from './demo'
 import { logger } from './logger'
 import { SNAPSHOT_FILE, ensureDirs } from './paths'
@@ -28,8 +29,7 @@ interface SnapshotFile {
 }
 
 /** 懒加载快照（只在第一次 append 时读盘） */
-async function loadAll(): Promise<Snapshot[]> {
-  if (cache) return cache
+async function loadAll(): Promise<Snapshot[]> {  if (cache) return cache
   try {
     const text = await fsp.readFile(SNAPSHOT_FILE, 'utf8')
     const data = JSON.parse(text) as SnapshotFile
@@ -69,11 +69,29 @@ function toSnapshot(row: BalanceRow): Snapshot {
   }
 }
 
-/** 读取全部快照（内存缓存优先；失败返回空数组，由调用方处理） */
+/**
+ * 读**原始**快照（不套用校正）。
+ * 只有「数据校正」功能需要它：界面要展示"校正前 vs 校正后"，以及按日期换算平移量。
+ * 其它业务一律用 readSnapshots()（已套用校正）。
+ */
+export async function readSnapshotsRaw(): Promise<Snapshot[]> {
+  if (isDemo()) return demoSnapshots()
+  return loadAll()
+}
+
+/**
+ * 读取全部快照（内存缓存优先；失败返回空数组，由调用方处理）。
+ *
+ * 这里是**所有历史统计的唯一出口**（每日使用、平台用量、使用报告、日历、趋势图、耗尽预估），
+ * 因此「手动校正」统一在这一层套用：校正账本一改，上面全部自动跟着对。
+ * 原始 snapshots.json 一行不动，撤销校正 = 删账本条目，随时可还原。
+ */
 export async function readSnapshots(): Promise<Snapshot[]> {
   if (isDemo()) return demoSnapshots()
 
-  return loadAll()
+  const all = await loadAll()
+  if (all.length === 0) return all
+  return applyCorrections(all)
 }
 
 /** 追加一批结果（同步改内存，异步落盘，不阻塞查询返回） */

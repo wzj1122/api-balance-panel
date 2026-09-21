@@ -8,6 +8,69 @@
  * 本文件不得 import 任何 node: / electron 模块（渲染进程也要用）。
  */
 
+// ---------- 数据校正（手动修正历史数据） ----------
+
+/**
+ * 一条校正记录（存在数据目录的 corrections.json）。
+ *
+ * - offset：从 fromTs 起，该账号快照的余额整体 +value（"从这一刻起余额差了多少"）
+ * - set   ：从 fromTs 起，该账号快照的剩余设为 value（"我知道这段真实余额是多少"）
+ *
+ * 一致性：两种都是"从某一时刻起全量平移/覆盖"，因此相邻快照的差值不变，
+ * 后续每天的消耗照样算得准（这正是不采用"只改一天"的原因）。
+ */
+export interface Correction {
+  id: string
+  accountId: string
+  /** 生效时间（毫秒）：此时间及之后的快照都受影响 */
+  fromTs: number
+  kind: 'offset' | 'set'
+  value: number
+  unit: string
+  /** 备注（改的原因，自己以后看得懂） */
+  note: string
+  createdAt: number
+}
+
+/** 新增校正的入参 */
+export interface CorrectionInput {
+  accountId: string
+  fromTs: number
+  kind: 'offset' | 'set'
+  value: number
+  unit?: string
+  note?: string
+}
+
+/** 快照校正后的结果（趋势图/校正页用） */
+export interface CorrectionPoint {
+  ts: number
+  /** 校正后剩余 */
+  remaining: number | null
+  /** 原始剩余（未校正） */
+  raw: number | null
+  /** 该点是否被校正影响 */
+  adjusted: boolean
+}
+
+/** 某账号的校正视图（数据校正页用） */
+export interface CorrectionView {
+  accountId: string
+  name: string
+  type: AccountType
+  unit: string
+  /** 当前净平移量 */
+  offset: number
+  /** 当前的 set 值（没有则 null） */
+  setValue: number | null
+  /** 校正条目 */
+  corrections: Correction[]
+  /** 最近若干条快照（校正后 + 原始值对照） */
+  points: CorrectionPoint[]
+  /** 各校正影响的快照条数（id → 条数） */
+  affected: Record<string, number>
+}
+
 // ---------- 基础枚举 ----------
 
 /** 支持的账号类型 */
@@ -246,6 +309,8 @@ export interface Snapshot {
   items: SnapshotItem[]
   latency_ms: number
   source: 'live' | 'cache'
+  /** 该条是否套用了手动校正（读出口标记，不落盘） */
+  adjusted?: boolean
 }
 
 // ---------- Settings（落盘，snake_case） ----------
