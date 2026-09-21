@@ -415,11 +415,12 @@ function exportCsv() {
 .chip-multi { font-size: 15px; }
 .chip-value .strong { font-size: 15px; }
 .chip-sub { font-size: var(--fs-foot); color: var(--tx3); font-weight: 600; }
-.danger-num { color: var(--err); }
+/* 「最可能先耗尽」也改成普通字色（不再用红色强调） */
+.danger-num { color: var(--tx-strong); }
 .charts { display: flex; flex-wrap: wrap; gap: var(--gap); margin-bottom: 20px; }
 .chart-card { flex: 1 1 300px; min-width: 280px; background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px 10px; box-shadow: var(--shadow-sm); }
 .chart-title .ct-total { color: var(--acc); font-weight: 700; margin-left: 6px; }
-.chart-title .ct-none { color: var(--err); font-weight: 600; margin-left: 6px; }
+.chart-title .ct-none { color: var(--tx3); margin-left: 6px; }
 .chart-title { font-size: var(--fs-foot); color: var(--tx3); font-weight: 600; margin-bottom: 8px; }
 .bars2 { display: flex; align-items: flex-end; gap: 4px; height: 64px; padding: 2px 0 0; }
 .bar-col { flex: 1; display: flex; align-items: flex-end; justify-content: center; height: 100%; }
@@ -440,29 +441,21 @@ function exportCsv() {
 .usage-table tbody tr:hover td { background: var(--card-hover); }
 .usage-table td.dim { color: var(--tx3); }
 .usage-table td.today { font-weight: 700; color: var(--acc); }
-.usage-table td.recharge { color: var(--err); font-weight: 600; font-size: 11.5px; }
-/* 充值日：红色 + 下划虚线，和「停机期间」列的红色区分开（两种都是"这天算不出正常消耗"，但不是一回事） */
-.usage-table td.recharge { text-decoration: underline dotted var(--err); text-underline-offset: 3px; }
+/* 「充值」格：跟其它数字一样普通显示，不做任何强调（用户要求：不需要突出显示） */
+.usage-table td.recharge { font-size: 11.5px; }
 .usage-table td.suggested { color: var(--tx2); }
 .usage-table td.num { font-variant-numeric: tabular-nums; }
 .usage-table td.strong { font-weight: 700; color: var(--tx); }
 .usage-table td.fcast { font-weight: 600; }
-/* 预计耗尽：只在"快用完了"时标红，其余保持普通字色（不再出现黄色档位） */
-.usage-table td.fcast.danger { color: var(--err); }
-/* 停机期间（软件未运行）消耗：只保留红色一种强调色（黄色太乱，已去掉） */
-.usage-table td.gap, .dd-table td.gap { color: var(--err); font-weight: 600; }
-.usage-table td.gap.dim { color: var(--tx3); font-weight: 400; }
-.dd-table td.gap.dim { color: var(--tx3); font-weight: 400; }
-/* 停机期间提示条：跟着表格一起改成红色系（原来那套黄色太乱，统一只用一种强调色） */
+/* 「预计耗尽」「停机期间」列：一律普通字色，不标红、不加粗（用户要求：不需要突出显示） */
+.usage-table td.gap, .dd-table td.gap { font-variant-numeric: tabular-nums; }
+/* 停机期间说明：普通一行提示文字，不做底色/边框/变色强调 */
 .gap-note {
   display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
-  margin: 0 0 12px; padding: 10px 14px;
-  background: var(--err-soft);
-  border: 1px solid var(--err-line);
-  border-radius: 12px; font-size: var(--fs-foot); color: var(--tx2);
+  margin: 0 0 12px; font-size: var(--fs-foot); color: var(--tx3);
 }
 .gap-ico { font-size: 13px; }
-.gap-val { color: var(--err); font-variant-numeric: tabular-nums; }
+.gap-val { font-variant-numeric: tabular-nums; color: var(--tx2); }
 .usage-table tfoot td { border-bottom: none; background: var(--acc-soft); }
 .acc-name { display: block; font-weight: 600; color: var(--tx); }
 .muted { color: var(--tx3); font-size: var(--fs-foot); }

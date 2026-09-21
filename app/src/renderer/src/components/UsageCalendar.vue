@@ -164,7 +164,7 @@ const monthBlocks = computed<CalMonth[]>(() => {
         </button>
       </div>
     </div>
-    <p class="cal-note">格子颜色越深表示当天消耗越多（按 {{ majorUnit || '主单位' }} 归一化）；点击有数据的天查看当日明细。余额型账号按「剩余变化」估算，充值会掩盖消耗。<br />带 <b class="gap-mark">⏸</b> 标记的日子表示检测到<strong>停机期间消耗</strong>（上次关闭软件到本次打开之间的余额下降）：无法按天归属，因此不画进颜色深浅，但<strong>已计入上方「每月消耗合计」与表格「合计（含停机）」</strong>，不计入日均与耗尽预估。</p>
+    <p class="cal-note">格子颜色越深表示当天消耗越多（按 {{ majorUnit || '主单位' }} 归一化）；点击有数据的天查看当日明细。余额型账号按「剩余变化」估算，充值会掩盖消耗。<br />带 ⏸ 标记的日子表示检测到<strong>停机期间消耗</strong>（上次关闭软件到本次打开之间的余额下降）：无法按天归属，因此不画进颜色深浅，但<strong>已计入上方「每月消耗合计」与表格「合计（含停机）」</strong>，不计入日均与耗尽预估。</p>
   </div>
 </template>
 
@@ -190,10 +190,8 @@ const monthBlocks = computed<CalMonth[]>(() => {
 .cal-day { font-weight: 600; font-size: 12.5px; }
 .cal-val { font-size: 10.5px; font-variant-numeric: tabular-nums; opacity: 0.85; }
 .cal-flag { font-size: 10px; margin-left: 2px; }
-/* 停机期间（软件未运行）消耗标记 */
-.cal-flag.gap { color: var(--warn); }
-.cal-val.gap-val { color: var(--warn); font-weight: 600; opacity: 1; }
-.cal-cell.lvl-2 .cal-val.gap-val, .cal-cell.lvl-3 .cal-val.gap-val { color: #ffe3ad; }
-.gap-mark { color: var(--warn); }
+/* 停机期间：只靠 ⏸ 标记与悬浮提示说明，不再用颜色/加粗强调（用户要求：不需要突出显示） */
+.cal-flag.gap { opacity: 0.85; }
+.cal-val.gap-val { opacity: 0.85; }
 .cal-note { font-size: var(--fs-foot); color: var(--tx3); margin-top: 8px; line-height: 1.7; }
 </style>

@@ -342,18 +342,15 @@ function exportCsv() {
 .chip-value .strong { font-size: 15px; }
 .chip-sub { font-size: var(--fs-foot); color: var(--tx3); font-weight: 600; }
 .chip-value.accent { color: var(--acc); }
-/* 换算口径说明条：折算开着是蓝色信息条，关掉是警示色，避免用户以为"数字不对" */
+/* 换算口径说明条：统一成朴素的信息条（不再因为"未启用折算"就整条变警示色） */
 .rate-note {
   display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
   margin: 0 0 14px; padding: 10px 14px;
-  background: var(--acc-soft); border: 1px solid var(--line);
+  background: var(--panel2); border: 1px solid var(--line);
   border-radius: 12px; font-size: var(--fs-foot); color: var(--tx2);
 }
-.rate-note.off { background: var(--warn-soft, rgba(255, 176, 32, 0.12)); border-color: var(--warn-line, rgba(255, 176, 32, 0.35)); }
-.rate-note.bad { background: var(--warn-soft, rgba(255, 176, 32, 0.12)); border-color: var(--warn-line, rgba(255, 176, 32, 0.35)); }
-.rate-ico { font-size: 13px; color: var(--acc); }
-.rate-note.off .rate-ico, .rate-note.bad .rate-ico { color: var(--warn); }
-.rate-val { color: var(--acc); font-variant-numeric: tabular-nums; }
+.rate-ico { font-size: 13px; color: var(--tx3); }
+.rate-val { color: var(--tx); font-variant-numeric: tabular-nums; }
 .bars-card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px 18px; margin-bottom: 18px; box-shadow: var(--shadow-sm); }
 .bars-title { font-size: var(--fs-foot); color: var(--tx3); font-weight: 600; margin-bottom: 10px; }
 .bar-row { display: flex; align-items: center; gap: 12px; margin-bottom: 9px; }
@@ -383,18 +380,15 @@ function exportCsv() {
 .usage-table td.cny.dim { color: var(--tx3); }
 .usage-table td.strong { font-weight: 700; color: var(--tx); }
 .usage-table tfoot td { border-bottom: none; background: var(--acc-soft); }
-/* 停机期间（软件未运行）消耗 */
-.usage-table td.gap { color: var(--warn); font-weight: 600; }
-.usage-table td.gap.dim { color: var(--tx3); font-weight: 400; }
+/* 停机期间（软件未运行）消耗：跟其它数字一样普通显示，不做强调（用户要求：不需要突出显示） */
+.usage-table td.gap { font-variant-numeric: tabular-nums; }
+/* 停机期间说明：普通提示文字，不做底色/边框/变色强调 */
 .gap-note {
   display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
-  margin: 0 0 14px; padding: 10px 14px;
-  background: var(--warn-soft, rgba(255, 176, 32, 0.12));
-  border: 1px solid var(--warn-line, rgba(255, 176, 32, 0.35));
-  border-radius: 12px; font-size: var(--fs-foot); color: var(--tx2);
+  margin: 0 0 14px; font-size: var(--fs-foot); color: var(--tx3);
 }
 .gap-ico { font-size: 13px; }
-.gap-val { color: var(--warn); font-variant-numeric: tabular-nums; }
+.gap-val { color: var(--tx2); font-variant-numeric: tabular-nums; }
 .th-day.faint { color: transparent; }
 .acc-name { display: block; font-weight: 600; color: var(--tx); }
 .muted { color: var(--tx3); font-size: var(--fs-foot); }
