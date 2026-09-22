@@ -723,7 +723,7 @@ export interface FxInfo {
 /** 平台元数据：驱动界面动态渲染字段 */
 export interface ProviderMeta {
   type: AccountType
-  /** 'DeepSeek 官方' */
+  /** 显示名，如 'DeepSeek'（取自 PROVIDER_META[t].label） */
   label: string
   needSecret: boolean
   needBaseUrl: boolean

@@ -52,7 +52,7 @@ const emit = defineEmits<{ (e: 'add'): void }>()
     </div>
 
     <h2 class="title">还没有配置任何账号</h2>
-    <p class="desc">把 DeepSeek、硅基流动、中转站、MiMo 的余额集中到一个窗口，<br />自动定时刷新，低余额第一时间提醒</p>
+    <p class="desc">把 DeepSeek、siliconflow、Xiaomi MIMO、bigmodel 的余额集中到一个窗口，<br />自动定时刷新，低余额第一时间提醒</p>
 
     <button class="btn primary lg" type="button" @click="emit('add')">
       <svg class="ico" viewBox="0 0 16 16" width="15" height="15">

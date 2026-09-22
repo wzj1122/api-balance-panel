@@ -111,6 +111,18 @@ export function supportsRenewal(type: string): boolean {
   return renewalRecipeFor(type) !== null
 }
 
+/**
+ * **是否真正执行**静默续期（后台保活 / 到期重试 / 手动按钮共用同一口径）。
+ *
+ * 2026-09-22 用户确认：商汤会话是平台硬限制的 3 小时**绝对到期**（实测续期基本无效），
+ * 因此商汤**不再做任何自动/手动续期尝试**——但 `supportsRenewal` 仍返回 true，
+ * 以便 `sessionExpiryMs` 继续提供「到期前 15 分钟提醒」。
+ * 小米 MiMo（mimo / mimo-plan）的续期保持不变。
+ */
+export function autoRenewable(type: string): boolean {
+  return supportsRenewal(type) && type !== 'sensenova'
+}
+
 /** 从会话 Cookie 串里解析出给某个 URL 用的 Cookie 头（简版：不区分域，按名去重） */
 function cookieHeaderFrom(session: CredentialSession | null): string {
   return session?.cookies ?? ''

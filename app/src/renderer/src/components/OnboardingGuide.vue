@@ -17,7 +17,7 @@ const STEPS = [
   },
   {
     title: '两种方式开始',
-    desc: '① 添加你自己的账号（DeepSeek、小米 MiMo、MiniMax、智谱、硅基流动、阿里云百炼、New API 中转站、自定义）；② 或者先点「先看演示模式」体验完整功能——示例数据只存在内存里，不会写入你的配置、也不会发起请求。小提示：用 API Key 建的账号会自动同步出现在「Key 管理」里。'
+    desc: '① 添加你自己的账号（DeepSeek、siliconflow、Xiaomi MIMO、MiniMax、bigmodel、阿里云百炼、SenseNova）；② 或者先点「先看演示模式」体验完整功能——示例数据只存在内存里，不会写入你的配置、也不会发起请求。小提示：用 API Key 建的账号会自动同步出现在「Key 管理」里。'
   },
   {
     title: '主要功能一览',

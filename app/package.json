@@ -1,8 +1,8 @@
 {
   "name": "api-balance-panel",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "private": true,
-  "description": "API 余额监控面板：一个窗口看完所有 AI 平台与中转站的余额",
+  "description": "API 余额监控面板：一个窗口看完所有 AI 平台的余额",
   "productName": "API 余额面板",
   "main": "./out/main/index.js",
   "author": "Zhenjie Wang",

@@ -61,7 +61,7 @@ export const REFRESH_OPTIONS: number[] = [60, 300, 900, 1800, 3600]
 export const PROVIDER_META: Record<AccountType, ProviderMeta> = {
   deepseek: {
     type: 'deepseek',
-    label: 'DeepSeek 官方',
+    label: 'DeepSeek',
     needSecret: true,
     needBaseUrl: false,
     needUserId: false,
@@ -73,7 +73,7 @@ export const PROVIDER_META: Record<AccountType, ProviderMeta> = {
   },
   siliconflow: {
     type: 'siliconflow',
-    label: '硅基流动',
+    label: 'siliconflow',
     needSecret: true,
     needBaseUrl: false,
     needUserId: false,
@@ -109,7 +109,7 @@ export const PROVIDER_META: Record<AccountType, ProviderMeta> = {
   },
   mimo: {
     type: 'mimo',
-    label: '小米 MiMo',
+    label: 'Xiaomi MIMO',
     needSecret: true,
     needBaseUrl: false,
     needUserId: false,
@@ -121,7 +121,7 @@ export const PROVIDER_META: Record<AccountType, ProviderMeta> = {
   },
   'mimo-plan': {
     type: 'mimo-plan',
-    label: '小米 MiMo 套餐',
+    label: 'Xiaomi MIMO TokenPlan',
     needSecret: true,
     needBaseUrl: false,
     needUserId: false,
@@ -145,7 +145,7 @@ export const PROVIDER_META: Record<AccountType, ProviderMeta> = {
   },
   zhipu: {
     type: 'zhipu',
-    label: '智谱 AI',
+    label: 'bigmodel',
     needSecret: true,
     needBaseUrl: false,
     needUserId: false,
@@ -169,7 +169,7 @@ export const PROVIDER_META: Record<AccountType, ProviderMeta> = {
   },
   sensenova: {
     type: 'sensenova',
-    label: '商汤 日日新（SenseNova）',
+    label: 'SenseNova',
     needSecret: true,
     needBaseUrl: false,
     needUserId: false,
@@ -181,8 +181,16 @@ export const PROVIDER_META: Record<AccountType, ProviderMeta> = {
   }
 }
 
-/** 账号类型顺序（界面下拉与 PROVIDERS 注册表共用） */
+/** 账号类型顺序（界面下拉与 PROVIDERS 注册表共用；含历史类型，store 校验依赖它） */
 export const ACCOUNT_TYPES: AccountType[] = ['deepseek', 'siliconflow', 'newapi', 'custom', 'mimo', 'mimo-plan', 'minimax', 'zhipu', 'aliyun', 'sensenova']
+
+/**
+ * 新增账号时**可选**的平台类型（界面下拉用）。
+ * `newapi` / `custom` 两个选项已按用户要求从界面移除（2026-09-22），
+ * 但类型本身保留在 ACCOUNT_TYPES 里：store 校验与适配器仍接受它们，
+ * 已配置过的账号照常读写、查询不受影响，只是不能再新建。
+ */
+export const ACCOUNT_TYPE_OPTIONS: AccountType[] = ACCOUNT_TYPES.filter((t) => t !== 'newapi' && t !== 'custom')
 
 /** DeepSeek 官方余额接口地址（固定，用户不可配） */
 export const DEEPSEEK_BALANCE_URL = 'https://api.deepseek.com/user/balance'
@@ -311,11 +319,11 @@ export function credentialKind(type: AccountType): CredentialKind {
   return 'cookie'
 }
 
-/** 新建 Key 时的平台预设（选中后自动填调用地址） */
+/** 新建 Key 时的平台预设（选中后自动填调用地址；含历史类型，供已有 Key 的地址回查） */
 export const KEY_PRESETS: { type: AccountType; label: string; base_url: string; hint: string }[] = [
   {
     type: 'deepseek',
-    label: 'DeepSeek 官方',
+    label: 'DeepSeek',
     base_url: 'https://api.deepseek.com',
     hint: '在 DeepSeek 开放平台 → API Keys 创建，密钥以 sk- 开头'
   },
@@ -332,3 +340,6 @@ export const KEY_PRESETS: { type: AccountType; label: string; base_url: string; 
     hint: '自定义请求地址与取值路径，适合自建或小众平台'
   }
 ]
+
+/** 新建 Key 下拉里**可选**的预设（newapi / custom 已按用户要求从界面移除，仅历史 Key 保留回查） */
+export const KEY_PRESET_OPTIONS = KEY_PRESETS.filter((p) => p.type !== 'newapi' && p.type !== 'custom')

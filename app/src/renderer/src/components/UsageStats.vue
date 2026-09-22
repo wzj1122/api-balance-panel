@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import type { DailyAccount, DailyUsageReport } from '@shared/types'
+import type { DailyAccount, DailyUsageReport, Settings } from '@shared/types'
 import { PROVIDER_META } from '@shared/constants'
 import { fmtNumber } from '@shared/format'
-import { listDailyUsage } from '@renderer/api/ipc'
+import { compareWeight } from '@shared/cost'
+import { getFx, listDailyUsage } from '@renderer/api/ipc'
 import { downloadCsv, todayStamp } from '@renderer/utils/csv'
 import BaseModal from './BaseModal.vue'
 import UsageCalendar from './UsageCalendar.vue'
@@ -14,6 +15,13 @@ const report = ref<DailyUsageReport | null>(null)
 const range = ref<7 | 30>(7)
 const exporting = ref(false)
 const selectedTs = ref<number | null>(null)
+
+const props = defineProps<{ settings: Settings | null }>()
+
+/** 积分折算率（多少积分算 1 元）；0 / 缺省 = 不折算 */
+const creditsPerCny = computed(() => props.settings?.credits_per_cny ?? 0)
+/** 美元汇率（仅当报表里出现美元单位时才去取，主进程 1 小时缓存） */
+const usdRate = ref(0)
 
 /** 跳到「数据校正」页（带着账号）——历史数据不对时一步到位 */
 const emit = defineEmits<{ (e: 'correct', accountId: string): void }>()
@@ -70,8 +78,14 @@ async function load() {
   error.value = ''
   try {
     const r = await listDailyUsage(range.value)
-    if (r.ok) report.value = r.data
-    else error.value = r.error
+    if (r.ok) {
+      report.value = r.data
+      // 报表里有美元单位 → 取一次汇率（供「今日消耗最多」折算比较；主进程 1 小时缓存）
+      if (r.data.accounts.some((a) => a.unit === 'USD') && usdRate.value <= 0) {
+        const fx = await getFx()
+        if (fx.ok) usdRate.value = fx.data.rate
+      }
+    } else error.value = r.error
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
   } finally {
@@ -97,11 +111,21 @@ const todayChips = computed(() =>
     .filter((c) => c.value !== null && c.value !== undefined && Number.isFinite(c.value))
 )
 
+/**
+ * 「今日消耗最多」：**先折算成金额再比**（2026-09-22 用户要求）。
+ * 积分型（商汤）按折算率折元、美元按汇率折元，否则「4000 积分 > 3 元」会选错人；
+ * **显示仍用原单位原值**（商汤显示积分）。
+ * 主进程已按同一权重排序，这里取「第一个有今日数据的」即为折算金额最大者；
+ * 自己再算一遍权重兜底（不依赖排序口径），折不了时回退原值保持旧行为。
+ */
 const topToday = computed<DailyAccount | null>(() => {
+  const list = report.value?.accounts ?? []
+  const w = (a: DailyAccount): number =>
+    compareWeight(a.today, a.unit, creditsPerCny.value, usdRate.value) ?? Number.NEGATIVE_INFINITY
   let best: DailyAccount | null = null
-  for (const a of report.value?.accounts ?? []) {
+  for (const a of list) {
     if (a.today === null || a.today === undefined) continue
-    if (!best || a.today > (best.today as number)) best = a
+    if (!best || w(a) > w(best)) best = a
   }
   return best
 })
@@ -241,7 +265,7 @@ function exportCsv() {
             <div class="chip-value" v-else>暂无数据</div>
           </div>
           <div class="chip">
-            <div class="chip-label">今日消耗最多</div>
+            <div class="chip-label">今日消耗最多（按折算金额比较）</div>
             <div class="chip-value" v-if="topToday">
               <span class="strong">{{ topToday.name }}</span>
               <span class="chip-sub num">{{ fmtNumber(topToday.today) }} {{ topToday.unit }}</span>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { AccountType, BalanceRow, DailyAccount, Snapshot } from '@shared/types'
 import { PROVIDER_META } from '@shared/constants'
 import { fmtAgo, fmtNumber, pctLevel } from '@shared/format'
@@ -35,14 +35,14 @@ const adjusted = computed(() => /已手动校正/.test(props.row.note ?? ''))
 
 /**
  * 登录型平台：会话会过期、需要重新登录。
- * 除了商汤 / 小米 MiMo，硅基流动 / MiniMax / 智谱也是"登录抓凭据"型，
+ * 除了 SenseNova / Xiaomi MIMO，siliconflow / MiniMax / bigmodel 也是"登录抓凭据"型，
  * 所以卡片上都给「重新登录」按钮（用户 2026-09-22 要求：基本上所有模型都可能要重登）。
  */
 const LOGIN_TYPES = new Set<AccountType>(['sensenova', 'mimo', 'mimo-plan', 'siliconflow', 'minimax', 'zhipu'])
 const canRelogin = computed(() => LOGIN_TYPES.has(props.row.type))
 
-/** 支持"静默续期"的平台（子集：只有这两个平台有会话保活链路） */
-const RENEWABLE = new Set<AccountType>(['sensenova', 'mimo', 'mimo-plan'])
+/** 支持"静默续期"的平台（只有小米 MiMo 系有会话保活链路；商汤会话 3 小时绝对到期，2026-09-22 起停用续期） */
+const RENEWABLE = new Set<AccountType>(['mimo', 'mimo-plan'])
 const canRenew = computed(() => RENEWABLE.has(props.row.type))
 
 /** 续期按钮状态：正在续期 / 提示文案 */
@@ -75,7 +75,7 @@ const PLATFORM_COLORS: Record<AccountType, string> = {
   sensenova: 'var(--p-sensenova)'
 }
 
-/** 平台显示名，如「DeepSeek 官方」 */
+/** 平台显示名，如「DeepSeek」（PROVIDER_META[t].label） */
 const typeLabel = computed(() => (PROVIDER_META[props.row.type]?.label ?? props.row.type))
 
 /** 进度条分母：套餐类用 API 给的总额；其余用「累计总额」（余额每上升一次累加，充值后自动新一轮） */
@@ -117,9 +117,23 @@ const agoText = computed(() => {
   return r.cached ? base + ' · 缓存' : base
 })
 
-/** 趋势图折叠状态 */
-const expanded = ref(false)
-/** 已拉取的快照（只保留 ok=true 的），重复展开不重拉 */
+/**
+ * 趋势弹窗（2026-09-22 改版，用户要求）：
+ * 趋势图不再内嵌在卡片里（卡片 overflow:hidden 会裁剪），改为点「趋势」按钮弹出的
+ * 固定 420px 悬浮窗（可比卡片宽），点弹窗外部 / Esc 关闭。
+ * 弹窗内容 = 模型（账号名 + 平台）+ 剩余余额 + 时间跨度选择（1 小时 / 6 小时 / 24 小时）+ 趋势图。
+ */
+const trendOpen = ref(false)
+const trendBtnEl = ref<HTMLElement | null>(null)
+const popupEl = ref<HTMLElement | null>(null)
+const popPos = ref({ left: 0, top: 0 })
+/** 固定时间轴选项（小时）：用户指定只保留这三个刻度 */
+const SPANS = [1, 6, 24] as const
+const spanH = ref<(typeof SPANS)[number]>(1)
+/** 弹窗打开/切换跨度时的轴右端时间戳（轴固定到“现在”，不随数据末点漂移） */
+const popEndTs = ref(Date.now())
+const spanMs = computed(() => spanH.value * 3600000)
+/** 已拉取的快照（只保留 ok=true 的），重复打开不重拉 */
 const trend = ref<Snapshot[]>([])
 const trendLoading = ref(false)
 
@@ -138,26 +152,111 @@ const trendPoints = computed(() => {
   }
   let use = uniq.slice(start)
   if (use.length < 2) use = uniq.slice(-30)
-  // 点太多就等间隔抽稀，保证曲线平滑
-  if (use.length > 60) {
-    const step = Math.ceil(use.length / 60)
+  // 点太多就等间隔抽稀，保证曲线平滑（时间窗内的过滤交给 TrendChart 按固定轴裁剪）
+  if (use.length > 200) {
+    const step = Math.ceil(use.length / 200)
     use = use.filter((_, k) => k % step === 0 || k === use.length - 1)
   }
   return use.map((s) => ({ ts: s.ts, remaining: s.remaining as number }))
 })
 
-async function toggleTrend(): Promise<void> {
-  expanded.value = !expanded.value
-  if (!expanded.value) return
-  if (trend.value.length > 0 || trendLoading.value) return
-  trendLoading.value = true
-  try {
-    const r = await listSnapshots(props.row.accountId)
-    if (r.ok) trend.value = r.data.filter((s) => s.ok)
-  } finally {
-    trendLoading.value = false
+/**
+ * 打开时按最近使用情况自动选轴（用户指定规则）：
+ * - 当日没有使用 → 24 小时
+ * - 近三小时没有使用（但当日用过）→ 6 小时
+ * - 近三小时内有使用 → 1 小时
+ * “使用”的判定：快照序列里最近一次余额下降（或 used 上升）的时间。
+ */
+function autoSpan(): (typeof SPANS)[number] {
+  const list = trend.value
+  let last = 0
+  for (let i = 1; i < list.length; i++) {
+    const prev = list[i - 1]
+    const cur = list[i]
+    const usedUp = typeof cur.used === 'number' && typeof prev.used === 'number' && cur.used > prev.used
+    const remDown =
+      typeof cur.remaining === 'number' && typeof prev.remaining === 'number' && cur.remaining < prev.remaining
+    if (usedUp || remDown) last = Math.max(last, cur.ts)
   }
+  if (!last) return 24
+  const day0 = new Date()
+  day0.setHours(0, 0, 0, 0)
+  if (last < day0.getTime()) return 24 // 当日没有使用
+  if (last < Date.now() - 3 * 3600000) return 6 // 近三小时没有使用
+  return 1 // 有使用
 }
+
+function setSpan(h: (typeof SPANS)[number]): void {
+  spanH.value = h
+  popEndTs.value = Date.now()
+}
+
+async function toggleTrend(ev: MouseEvent): Promise<void> {
+  if (trendOpen.value) {
+    closeTrend()
+    return
+  }
+  const btn = (ev.currentTarget as HTMLElement | null) ?? null
+  trendBtnEl.value = btn
+  const rect = btn?.getBoundingClientRect()
+  const POP_W = 420
+  // 悬浮窗右缘贴按钮右缘，越界向左收；先给按钮下方位置，渲染后再防溢出
+  const left = Math.max(12, Math.min((rect?.right ?? window.innerWidth) - POP_W, window.innerWidth - POP_W - 12))
+  popPos.value = { left, top: rect ? rect.bottom + 8 : 80 }
+  popEndTs.value = Date.now()
+  trendOpen.value = true
+  if (trend.value.length === 0 && !trendLoading.value) {
+    trendLoading.value = true
+    try {
+      const r = await listSnapshots(props.row.accountId)
+      if (r.ok) trend.value = r.data.filter((s) => s.ok)
+    } finally {
+      trendLoading.value = false
+    }
+  }
+  // 数据到位后按规则自动选轴（用户手动切换过也遵循——只在打开那一刻自动）
+  spanH.value = autoSpan()
+  await nextTick()
+  // 底部放不下 → 翻到按钮上方
+  const h = popupEl.value?.offsetHeight ?? 0
+  if (rect && h > 0 && popPos.value.top + h > window.innerHeight - 12) {
+    popPos.value = { ...popPos.value, top: Math.max(12, rect.top - h - 8) }
+  }
+  // 横向再夹一次（渲染后实际宽度恒为 420，但视口可能很窄）
+  popPos.value = { ...popPos.value, left: Math.max(12, Math.min(popPos.value.left, window.innerWidth - POP_W - 12)) }
+}
+
+function closeTrend(): void {
+  trendOpen.value = false
+}
+
+function onDocDown(ev: MouseEvent): void {
+  const t = ev.target as Node | null
+  if (!t) return
+  // 点在弹窗内 / 趋势按钮上 → 不关（按钮自己的 click 负责开/关切换）
+  if (popupEl.value?.contains(t)) return
+  if (trendBtnEl.value?.contains(t)) return
+  closeTrend()
+}
+
+function onEsc(ev: KeyboardEvent): void {
+  if (ev.key === 'Escape') closeTrend()
+}
+
+watch(trendOpen, (open) => {
+  if (open) {
+    document.addEventListener('mousedown', onDocDown, true)
+    window.addEventListener('keydown', onEsc)
+  } else {
+    document.removeEventListener('mousedown', onDocDown, true)
+    window.removeEventListener('keydown', onEsc)
+  }
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('mousedown', onDocDown, true)
+  window.removeEventListener('keydown', onEsc)
+})
 </script>
 
 <template>
@@ -267,8 +366,8 @@ async function toggleTrend(): Promise<void> {
         <button
           class="icon-btn"
           type="button"
-          title="趋势"
-          :class="{ active: expanded }"
+          title="趋势（弹出时间跨度 1 / 6 / 24 小时）"
+          :class="{ active: trendOpen }"
           @click="toggleTrend"
         >
           <svg class="ico" viewBox="0 0 16 16" width="14" height="14">
@@ -392,11 +491,6 @@ async function toggleTrend(): Promise<void> {
       </li>
     </ul>
 
-    <div v-if="expanded" class="trend">
-      <span v-if="trendLoading" class="trend-loading">趋势加载中…</span>
-      <TrendChart v-else :data="trendPoints" />
-    </div>
-
     <p v-if="forecast" class="fcast" :class="forecast.cls">{{ forecast.text }}</p>
 
     <footer class="foot">
@@ -404,6 +498,39 @@ async function toggleTrend(): Promise<void> {
       <span class="time">{{ agoText }}</span>
     </footer>
   </article>
+
+  <!-- 趋势悬浮窗（Teleport 到 body：卡片 overflow:hidden 会裁剪内嵌内容） -->
+  <Teleport to="body">
+    <div
+      v-if="trendOpen"
+      ref="popupEl"
+      class="trend-pop"
+      :style="{ left: popPos.left + 'px', top: popPos.top + 'px', '--card-acc': PLATFORM_COLORS[row.type] }"
+    >
+      <div class="tp-head">
+        <span class="tp-dot" :style="{ background: 'var(--card-acc)' }"></span>
+        <span class="tp-name">{{ row.name }}</span>
+        <span class="tp-tag">{{ typeLabel }}</span>
+        <span class="tp-bal">
+          <span class="tp-bal-label">剩余余额</span>
+          <span class="num tp-bal-val">{{ fmtNumber(row.remaining) }} {{ row.unit }}</span>
+        </span>
+        <button class="tp-close" type="button" title="关闭（Esc）" @click="closeTrend">×</button>
+      </div>
+      <div class="tp-seg" role="tablist" aria-label="时间跨度">
+        <button
+          v-for="h in SPANS"
+          :key="h"
+          type="button"
+          :class="{ on: spanH === h }"
+          @click="setSpan(h)"
+        >{{ h }} 小时</button>
+      </div>
+      <span v-if="trendLoading" class="trend-loading">趋势加载中…</span>
+      <TrendChart v-else :data="trendPoints" :span-ms="spanMs" :end-ts="popEndTs" />
+      <div class="tp-foot">打开时按最近使用自动选轴（近三小时有用 → 1 小时；当日有用 → 6 小时；当日没用 → 24 小时）</div>
+    </div>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -786,18 +913,134 @@ async function toggleTrend(): Promise<void> {
   opacity: 0.7;
 }
 
-.trend {
-  margin: 6px 0 4px;
-  border-top: 1px solid var(--line);
-  padding-top: 10px;
-}
-
 .trend-loading {
   font-size: var(--fs-sub);
   color: var(--tx3);
   display: block;
   padding: 10px 0;
   text-align: center;
+}
+
+/* ---- 趋势悬浮窗（fixed 定位、固定 420px 宽，可比卡片宽） ---- */
+.trend-pop {
+  position: fixed;
+  z-index: 860;
+  width: 420px;
+  box-sizing: border-box;
+  padding: 12px 14px 10px;
+  background: var(--card-grad, var(--panel));
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tp-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.tp-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.tp-name {
+  font-weight: 650;
+  font-size: var(--fs-sub);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 140px;
+}
+
+.tp-tag {
+  font-size: var(--fs-foot);
+  color: var(--card-acc);
+  background: var(--acc-soft);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 8px;
+  flex: none;
+}
+
+.tp-bal {
+  margin-left: auto;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex: none;
+}
+
+.tp-bal-label {
+  font-size: var(--fs-foot);
+  color: var(--tx3);
+}
+
+.tp-bal-val {
+  font-weight: 700;
+  font-size: var(--fs-sub);
+}
+
+.tp-close {
+  flex: none;
+  margin-left: 6px;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--tx3);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.tp-close:hover {
+  background: var(--panel2);
+  color: var(--tx);
+}
+
+.tp-seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  align-self: flex-start;
+}
+
+.tp-seg button {
+  border: none;
+  background: transparent;
+  color: var(--tx2);
+  font-size: var(--fs-foot);
+  padding: 3px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.tp-seg button.on {
+  background: var(--card-acc);
+  color: #fff;
+  font-weight: 600;
+}
+
+.tp-seg button:not(.on):hover {
+  color: var(--tx);
+}
+
+.tp-foot {
+  font-size: var(--fs-foot);
+  color: var(--tx3);
+  line-height: 1.5;
 }
 
 .spin {

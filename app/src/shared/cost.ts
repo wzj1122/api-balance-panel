@@ -54,3 +54,32 @@ export function rateText(creditsPerCny: number | null | undefined): string {
   const perYuan = n >= 1e4 ? (n / 1e4).toFixed(2) + ' 万积分' : n.toFixed(0) + ' 积分'
   return '1 元 ≈ ' + perYuan + '（100 万积分 ≈ ' + (1e6 / n).toFixed(1) + ' 元）'
 }
+
+/** 美元单位（跨单位比较时折成人民币用） */
+const USD_UNITS = ['USD', 'usd', '$', '美元']
+
+/**
+ * 跨单位**比较用**的金额权重（单位：人民币元）——只用来排序 / 选“最多”，**不用于展示**。
+ *
+ * 口径（2026-09-22 用户要求）：
+ * - 积分型单位 → 按折算率折成人民币（商汤的积分必须折算后才能和元比）；
+ * - 美元单位 → 按实时汇率折成人民币；
+ * - 元 / CNY 等本身就是金额 → 原值；
+ * - 折不了（积分没设折算率、汇率未知、没见过的单位）→ 回退原值，保持旧行为不比错。
+ *
+ * 展示仍一律用原单位原值：折算只发生在比较的“后台”。
+ */
+export function compareWeight(
+  value: number | null | undefined,
+  unit: string,
+  creditsPerCny: number | null | undefined,
+  usdRate?: number | null
+): number | null {
+  if (value === null || value === undefined || !Number.isFinite(value)) return null
+  const cny = creditCny(value, unit, creditsPerCny)
+  if (cny !== null) return cny
+  if (USD_UNITS.includes(String(unit ?? '').trim()) && typeof usdRate === 'number' && usdRate > 0) {
+    return value * usdRate
+  }
+  return value
+}

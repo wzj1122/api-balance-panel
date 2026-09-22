@@ -10,7 +10,7 @@ import { maybeNotify } from './notify'
 import { isDemo, demoRows } from './demo'
 import { updateTray } from './tray'
 import { runPool } from './runPool'
-import { renewCredential, msUntilExpiry, sessionExpiryMs, supportsRenewal } from './renewal'
+import { renewCredential, msUntilExpiry, sessionExpiryMs, supportsRenewal, autoRenewable } from './renewal'
 import * as snapshot from './snapshot'
 import { store } from './store'
 import { getMainWindow } from './window'
@@ -67,7 +67,8 @@ const RENEW_COOLDOWN_MS = 5 * 60 * 1000
  * @param reason 'expired' 到期/失败后自动续期；'manual' 用户点卡片按钮；'startup' 启动时预热
  */
 export async function renewForAccount(account: Account, reason: 'expired' | 'manual' | 'startup'): Promise<boolean> {
-  if (!supportsRenewal(account.type)) return false
+  // 商汤已停用一切续期尝试（会话为 3 小时绝对到期，续期无效；到期提醒仍走 keepAliveSessions）
+  if (!autoRenewable(account.type)) return false
   // 手动点按钮时不受冷却限制（用户明确要求重试）
   const until = renewCooldown.get(account.id) ?? 0
   if (reason !== 'manual' && Date.now() < until) {
@@ -105,7 +106,8 @@ async function queryAccount(accountInput: Account, force: boolean): Promise<Bala
   const started = Date.now()
 
   // 凭据临期（或已过期）→ 先静默续期，避免"正好卡在过期那一刻"报一次失败
-  if (supportsRenewal(account.type)) {
+  // （商汤不做续期尝试——会话绝对到期续了也没用，直接查，过期就走重新登录提示）
+  if (autoRenewable(account.type)) {
     let left = msUntilExpiry(account)
     // token 解不出到期时间（商汤）→ 退回用会话 Cookie 的到期时间判断，别等到 401 才续
     if (left === null) {
@@ -288,6 +290,9 @@ export async function keepAliveSessions(maxAgeMs = 60 * 60 * 1000): Promise<numb
     } else if (sessionLeft === null || sessionLeft > EXPIRY_WARN_MS) {
       warnedExpiry.delete(acc.id) // 重新登录后会话变了，允许下次再提醒
     }
+
+    // 商汤：会话为绝对到期、续期实测无效 → 不做续期尝试（2026-09-22 用户确认），上面的到期提醒照常保留
+    if (!autoRenewable(acc.type)) continue
 
     /**
      * 要不要现在续：

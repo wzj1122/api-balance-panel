@@ -3,8 +3,8 @@ import { computed, onMounted, ref } from 'vue'
 import type { PlatformUsageReport, Settings } from '@shared/types'
 import { PROVIDER_META } from '@shared/constants'
 import { fmtNumber, fmtMoney } from '@shared/format'
-import { creditCny, hasCreditRate, isCreditUnit, rateText } from '@shared/cost'
-import { listPlatformUsage } from '@renderer/api/ipc'
+import { creditCny, compareWeight, hasCreditRate, isCreditUnit, rateText } from '@shared/cost'
+import { getFx, listPlatformUsage } from '@renderer/api/ipc'
 import { downloadCsv, todayStamp } from '@renderer/utils/csv'
 
 /**
@@ -25,6 +25,8 @@ const exporting = ref(false)
 
 /** 积分折算率（多少积分算 1 元）；0 / 缺省 = 不折算 */
 const creditsPerCny = computed(() => props.settings?.credits_per_cny ?? 0)
+/** 美元汇率（报表里出现美元单位时才取；主进程 1 小时缓存，取不到 = 美元暂按原值参与比较） */
+const usdRate = ref(0)
 /** 折算率说明文案（设置页与页脚共用同一函数，口径不会写歪） */
 const rateLabel = computed(() => rateText(creditsPerCny.value))
 
@@ -33,8 +35,14 @@ async function load() {
   error.value = ''
   try {
     const r = await listPlatformUsage(range.value)
-    if (r.ok) report.value = r.data
-    else error.value = r.error
+    if (r.ok) {
+      report.value = r.data
+      // 跨币种比较（2026-09-22）：报表里有美元单位 → 取汇率折成人民币参与对比条
+      if (r.data.platforms.some((p) => p.unit === 'USD') && usdRate.value <= 0) {
+        const fx = await getFx()
+        if (fx.ok) usdRate.value = fx.data.rate
+      }
+    } else error.value = r.error
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
   } finally {
@@ -77,15 +85,18 @@ function unitDaySum(days: (number | null)[]): number | null {
   return vals.length > 0 ? vals.reduce((a, b) => a + b, 0) : null
 }
 
-const totalByUnit = computed(() =>
-  (report.value?.unitTotals ?? [])
+const totalByUnit = computed(() => {
+  const list = (report.value?.unitTotals ?? [])
     .map((u) => {
       const total = u.days.filter((v): v is number => v !== null && v !== undefined && Number.isFinite(v)).reduce((a, b) => a + b, 0)
       return { unit: u.unit, total, cny: toCny(total, u.unit) }
     })
     .filter((x) => x.total > 0)
-    .sort((a, b) => b.total - a.total)
-)
+  // 排序也按折算金额（跨单位不裸比）；折不了回退原值
+  const w = (x: { unit: string; total: number }): number =>
+    compareWeight(x.total, x.unit, creditsPerCny.value, usdRate.value) ?? x.total
+  return list.sort((a, b) => w(b) - w(a))
+})
 
 /**
  * 积分部分的合计（只有一个数、且只算积分型单位）。
@@ -102,8 +113,9 @@ const showCnyCard = computed(() => totalByUnit.value.some((x) => isCreditUnit(x.
 const creditRateMissing = computed(() => showCnyCard.value && !hasCreditRate(creditsPerCny.value))
 
 /**
- * 平台对比：积分型平台按折合人民币参与比较（否则百万积分和几块钱没法比），
- * 其余单位之间本来就能直接比，按原值排。
+ * 平台对比：**统一折算成金额再比**（2026-09-22 用户要求跨币种也折算）——
+ * 积分型按折算率折元、美元按汇率折元，其余（元等）原值即金额；
+ * 折不了的回退原值（不比错）。**展示仍用原单位原值**（折算值只作对比条权重）。
  */
 const platformBars = computed(() => {
   const ps = report.value?.platforms ?? []
@@ -112,8 +124,8 @@ const platformBars = computed(() => {
     return {
       p,
       cny,
-      /** 权重：积分型用折合人民币，其它单位用原值（同类之间原值就是同一把尺子） */
-      weigh: cny ?? p.total ?? 0
+      /** 权重：跨单位折算成人民币金额；折不了回退原值 */
+      weigh: compareWeight(p.total, p.unit, creditsPerCny.value, usdRate.value) ?? 0
     }
   })
   rows.sort((a, b) => b.weigh - a.weigh)
@@ -237,7 +249,7 @@ function exportCsv() {
             <span class="muted">去「设置 → 成本折算」填「多少积分算 1 元」即可启用。</span>
           </template>
           <template v-else>
-            <span><strong>积分</strong>按折合人民币参与对比（元 / 美元单位不折算，直接看数字）。</span>
+            <span><strong>积分 / 美元</strong>统一折算成金额参与对比（元单位本身就是金额，直接看数字）。</span>
             <b class="rate-val">{{ rateLabel }}</b>
             <span class="muted">折算值仅为估算，可在「设置 → 成本折算」修改。</span>
           </template>
@@ -317,7 +329,7 @@ function exportCsv() {
           「折合人民币」<strong>只对积分型单位</strong>（商汤这类）折算；元 / 美元单位本身就是金额、直接看数字即可，所以那几行留空。
           <template v-if="creditRateMissing">当前还没设积分折算率，去「设置 → 成本折算」填「多少积分算 1 元」即可。</template>
           <template v-else>{{ rateLabel }}（默认按 DeepSeek 高峰价反推，可在「设置 → 成本折算」修改）。</template>
-          积分与金额<strong>不能直接相加</strong>，所以对比条里积分按折算值参与，其它单位按原值。
+          对比条与排序按<strong>折算金额</strong>统一比较（积分折元、美元按汇率折元），但表格展示仍是各自原单位；积分与金额<strong>不能直接相加</strong>。
         </p>
       </template>
 

@@ -71,7 +71,7 @@ function openCorrection(accountId?: string): void {
  *
  * 为什么要它（用户 2026-09-22 要求）：有些平台的会话是**绝对到期、无法续期**的
  * （商汤实测 3 小时），到期后必然要重新登录；以前得「点编辑 → 点登录 → 再点保存」，
- * 现在卡片上点一下就行。所有登录型平台（小米 MiMo / 套餐 / 硅基流动 / MiniMax / 智谱 / 商汤）共用。
+ * 现在卡片上点一下就行。所有登录型平台（Xiaomi MIMO / 套餐 / siliconflow / MiniMax / bigmodel / SenseNova）共用。
  */
 async function onRelogin(id: string): Promise<void> {
   const acc = accounts.value.find((a) => a.id === id)
@@ -208,10 +208,10 @@ const failCount = computed(() => rows.value.filter((r) => !r.ok).length)
 
 /** 概览页分组（可折叠） */
 const GROUPS: { key: string; label: string; types: AccountType[] }[] = [
-  // API 令牌 = 用 API Key 访问的平台；登录态型（硅基流动、商汤日日新等）属于套餐/额度
+  // API 令牌 = 用 API Key 访问的平台；登录态型（siliconflow、SenseNova 等）属于套餐/额度
   { key: 'token', label: 'API 令牌', types: ['deepseek', 'newapi', 'custom'] },
   { key: 'wallet', label: '钱包余额', types: ['siliconflow', 'mimo', 'minimax', 'zhipu', 'aliyun'] },
-  // 套餐 / 额度类：小米 MiMo 套餐、商汤日日新 Token Plan（都是「额度池」口径）
+  // 套餐 / 额度类：Xiaomi MIMO TokenPlan、SenseNova Token Plan（都是「额度池」口径）
   { key: 'plan', label: '套餐 / 额度', types: ['mimo-plan', 'sensenova'] }
 ]
 const collapsed = ref<Set<string>>(new Set())
@@ -436,7 +436,7 @@ async function onSettingsSave(patch: Parameters<typeof saveSettings>[0]) {
           </template>
         </template>
 
-        <UsageStats v-else-if="view === 'usage'" @correct="openCorrection" />
+        <UsageStats v-else-if="view === 'usage'" :settings="settings" @correct="openCorrection" />
 
         <PlatformUsage v-else-if="view === 'platform'" :settings="settings" />
 
@@ -606,7 +606,7 @@ async function onSettingsSave(patch: Parameters<typeof saveSettings>[0]) {
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  /* 显式 max-content：避免内容多的卡片（阿里云/硅基流动）脚注被裁 */
+  /* 显式 max-content：避免内容多的卡片（阿里云/siliconflow）脚注被裁 */
   grid-auto-rows: max-content;
   gap: var(--gap);
   align-content: start;

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import type { AccountType, BalanceRow, KeyAuditItem, KeyRow } from '@shared/types'
-import { KEY_PRESETS, PROVIDER_META, credentialKind } from '@shared/constants'
+import { KEY_PRESETS, KEY_PRESET_OPTIONS, PROVIDER_META, credentialKind } from '@shared/constants'
 import { fmtAgo, fmtNumber } from '@shared/format'
 import { bulkKeys, listKeys, removeVaultKey, revealKey, saveAccount, saveVaultKey } from '@renderer/api/ipc'
 import BaseModal from './BaseModal.vue'
@@ -301,7 +301,7 @@ function auditFor(id: string): KeyAuditItem[] { return audit.value.filter((a) =>
     <div class="head">
       <h2>
         Key 管理
-        <InfoTip text="这里只管理「用 API Key 访问」的凭据（DeepSeek / New API 中转站 / 自定义）。Cookie 登录型平台（MiMo、MiniMax、智谱、硅基流动）与阿里云 AK/SK 请在概览页管理。" />
+        <InfoTip text="这里只管理「用 API Key 访问」的凭据（DeepSeek）。Cookie 登录型平台（Xiaomi MIMO、MiniMax、bigmodel、siliconflow、SenseNova）与阿里云 AK/SK 请在概览页管理。" />
       </h2>
       <div class="tabs">
         <button type="button" :class="{ on: tab === 'keys' }" @click="tab = 'keys'">Key 列表</button>
@@ -417,7 +417,7 @@ function auditFor(id: string): KeyAuditItem[] { return audit.value.filter((a) =>
       </div>
 
       <div v-if="groups.length === 0" class="hint-box">
-        {{ note || '还没有 API Key：点右上角「+ 新建 Key」添加（DeepSeek / New API / 自定义）' }}
+        {{ note || '还没有 API Key：点右上角「+ 新建 Key」添加（DeepSeek）' }}
       </div>
 
       <!-- 导出独立区块 -->
@@ -469,7 +469,7 @@ function auditFor(id: string): KeyAuditItem[] { return audit.value.filter((a) =>
         <label class="frow">
           <span class="flabel">平台</span>
           <select v-model="addForm.type" class="input" @change="onPresetChange(addForm.type)">
-            <option v-for="p in KEY_PRESETS" :key="p.type" :value="p.type">{{ p.label }}</option>
+            <option v-for="p in KEY_PRESET_OPTIONS" :key="p.type" :value="p.type">{{ p.label }}</option>
           </select>
           <span class="fhint">{{ addHint }}</span>
         </label>

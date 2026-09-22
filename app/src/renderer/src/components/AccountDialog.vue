@@ -2,7 +2,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { loginSite } from '@renderer/api/ipc'
 import {
-  ACCOUNT_TYPES,
+  ACCOUNT_TYPE_OPTIONS,
   DEFAULT_QUOTA_PER_USD,
   DEFAULT_SILICONFLOW_BASE_URL,
   MIMO_LOGIN_URL,
@@ -89,6 +89,16 @@ const otherType = (): AccountType | null => {
 
 const isEdit = () => !!props.account
 const meta = () => PROVIDER_META[form.type]
+
+/**
+ * 平台类型下拉：默认用 ACCOUNT_TYPE_OPTIONS（已按用户要求移除 newapi / custom 两个选项）；
+ * 但编辑历史账号时，若它的类型已不在可选列表里（老账号是 newapi / custom），
+ * 仍要把该类型补进下拉，否则 select 会显示空值。
+ */
+const typeOptions = computed<AccountType[]>(() => {
+  if (isEdit() && !ACCOUNT_TYPE_OPTIONS.includes(form.type)) return [...ACCOUNT_TYPE_OPTIONS, form.type]
+  return ACCOUNT_TYPE_OPTIONS
+})
 
 function initForm() {
   const a = props.account
@@ -381,9 +391,9 @@ function onSave() {
     <div class="field">
       <label class="label">平台类型<span class="req">*</span></label>
       <select v-model="form.type" class="input" :disabled="isEdit()" @change="onTypeChange">
-        <option v-for="t in ACCOUNT_TYPES" :key="t" :value="t">{{ PROVIDER_META[t].label }}</option>
+        <option v-for="t in typeOptions" :key="t" :value="t">{{ PROVIDER_META[t].label }}</option>
       </select>
-      <div class="hint">选了类型后，下面只显示需要的字段</div>
+      <div class="hint">选了类型后，下面只显示需要的字段<template v-if="isEdit()">（已保存的账号类型不可更改）</template></div>
     </div>
 
     <!-- 通用区 -->
@@ -447,7 +457,7 @@ function onSave() {
         <label class="add-both-row">
           <input v-model="addBoth" type="checkbox" />
           <span>
-            同时添加另一个方式：{{ otherType() === 'mimo-plan' ? '小米 MiMo 套餐（用量 / 额度 / 有效期）' : '小米 MiMo 余额（现金 / 赠送）' }}
+            同时添加另一个方式：{{ otherType() === 'mimo-plan' ? 'Xiaomi MIMO TokenPlan（用量 / 额度 / 有效期）' : 'Xiaomi MIMO 余额（现金 / 赠送）' }}
             <span class="hint-inline">（同一个登录状态，无需再登录，保存后一起出现在面板上）</span>
           </span>
         </label>

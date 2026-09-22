@@ -11,7 +11,9 @@ import type {
 } from '../shared/types'
 import { fmtNumber } from '../shared/format'
 import { PROVIDER_META } from '../shared/constants'
+import { compareWeight } from '../shared/cost'
 import { logger } from './logger'
+import { getFx } from './fx'
 import { readSnapshots } from './snapshot'
 import { store } from './store'
 
@@ -388,7 +390,22 @@ export async function buildDailyUsage(days: number = 30): Promise<DailyUsageRepo
       estEmptyTs
     })
   }
-  accounts.sort((a, b) => (b.today ?? 0) - (a.today ?? 0) || a.name.localeCompare(b.name, 'zh'))
+  /**
+   * 排序权重 = 「今日消耗」折算成人民币后的金额（2026-09-22 用户要求）：
+   * 积分型（商汤）按折算率折元、美元按汇率折元，元/原值直接比 ——
+   * 否则「4000 积分 > 3 元」这种跨单位裸比会把顺序排错。
+   * **只影响排序，展示仍用各自的原单位原值**；折不了的（没设折算率等）回退原值，不比错。
+   * 无今日数据的账号排最后（保持按名称次序）。
+   */
+  const settings = store.getSettings()
+  const units = new Set(accounts.map((a) => a.unit))
+  const usdRate = units.has('USD') ? (await getFx()).rate : 0
+  const todayWeight = (a: DailyAccount): number =>
+    compareWeight(a.today, a.unit, settings.credits_per_cny, usdRate) ?? Number.NEGATIVE_INFINITY
+  accounts.sort((a, b) => {
+    const d = todayWeight(b) - todayWeight(a)
+    return Number.isFinite(d) && d !== 0 ? d : a.name.localeCompare(b.name, 'zh')
+  })
 
   // 按单位合计
   const unitMap = new Map<
@@ -551,7 +568,16 @@ export async function buildPlatformUsage(days: number = 30): Promise<PlatformUsa
       gapTotal: round4(rec.gapTotal)
     })
   }
-  platforms.sort((a, b) => (b.total ?? -1) - (a.total ?? -1) || a.type.localeCompare(b.type))
+  // 排序同样按折算金额（积分→元、美元→元），跨单位不裸比；展示仍用原单位
+  const sortSettings = store.getSettings()
+  const hasUsd = platforms.some((p) => p.unit === 'USD')
+  const sortUsdRate = hasUsd ? (await getFx()).rate : 0
+  const totalWeight = (p: PlatformUsageRow): number =>
+    compareWeight(p.total, p.unit, sortSettings.credits_per_cny, sortUsdRate) ?? Number.NEGATIVE_INFINITY
+  platforms.sort((a, b) => {
+    const d = totalWeight(b) - totalWeight(a)
+    return Number.isFinite(d) && d !== 0 ? d : a.type.localeCompare(b.type)
+  })
 
   // 按单位合计
   const unitMap = new Map<

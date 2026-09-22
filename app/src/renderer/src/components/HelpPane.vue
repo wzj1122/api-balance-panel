@@ -3,7 +3,7 @@ import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 
 /** 内置使用说明整页（与 docs/使用说明.md 手工同步维护） */
 const docHtml = `<h1>API 余额面板 · 使用说明</h1>
-<blockquote>一个本地余额监控小工具：把 DeepSeek、硅基流动、小米 MiMo、New API 中转站、阿里云百炼等账号加进来，<br/>自动定时刷新余额头像卡片，余额低于阈值时变色提醒。所有密钥只保存在你自己的电脑上（本机加密），不会上传任何地方。</blockquote>
+<blockquote>一个本地余额监控小工具：把 DeepSeek、siliconflow、Xiaomi MIMO、阿里云百炼等账号加进来，<br/>自动定时刷新余额头像卡片，余额低于阈值时变色提醒。所有密钥只保存在你自己的电脑上（本机加密），不会上传任何地方。</blockquote>
 <hr/>
 <h2>一、安装与运行（拿到安装包怎么用）</h2>
 <ol><li>从发布页下载 <strong>「API 余额面板」安装包</strong>（约 130 MB）。</li><li>双击运行 → 跟着安装向导走（默认装到当前用户目录，可点「高级选项」改安装位置），装完后桌面和开始菜单会出现「API 余额面板」。</li><li>首次启动时 Windows 可能弹出蓝色提示「Windows 已保护你的电脑」（未知发布者）：点 <strong>「更多信息 → 仍要运行」</strong> 即可。这是因为安装包没有购买代码签名证书（个人分发、非商业签名），属正常现象，不是病毒。</li><li>所有账号配置保存在系统的用户数据目录（Windows：<code>%APPDATA%\\api-balance-panel</code>），换电脑/清数据前想备份，把整个文件夹拷走即可（里面是加密的密钥，拷给别人也没事，但建议别乱发）。</li></ol>
@@ -11,17 +11,13 @@ const docHtml = `<h1>API 余额面板 · 使用说明</h1>
 <hr/>
 <h2>二、添加账号：各平台分步说明</h2>
 <p>点击界面右上角「添加账号」，先选平台类型，再按下面的步骤填。</p>
-<h3>1) DeepSeek 官方</h3>
-<ol><li>打开 <a href="https://platform.deepseek.com/" target="_blank" rel="noopener">DeepSeek 开放平台</a> ，登录后在左侧「API Keys」创建一个 Key（以 <code>sk-</code> 开头）。</li><li>面板里选「DeepSeek 官方」，把 Key 粘贴进「API Key」栏，保存即可。</li><li>可选：「总额」填了你充值过的总额，卡片上才能算百分比，不填也能用。</li></ol>
-<h3>2) 硅基流动</h3>
-<ol><li>打开 <a href="https://cloud.siliconflow.cn/" target="_blank" rel="noopener">硅基流动控制台</a> 登录（没账号先注册）。</li><li>面板里选「硅基流动」，点「登录获取 Cookie」——会弹出登录窗口，登录完成后窗口会自动关闭，程序自动抓取 Cookie。</li><li>Cookie 失效后卡片会提示「重新登录」，点卡片上的编辑 → 再点一次登录按钮即可。</li><li>说明：官方已于 2026-08-14 下线 API Key 余额接口，所以这个平台必须用「登录」方式。</li></ol>
-<h3>3) 小米 MiMo</h3>
-<ol><li>打开 <a href="https://platform.xiaomimimo.com/" target="_blank" rel="noopener">MiMo 开发平台</a> 登录。</li><li>面板里选「小米 MiMo」，点「登录 MiMo 获取 Cookie」，会直接跳到小米账号登录页，登录完成窗口自动关闭。</li><li><strong>窗口关闭 ≠ 一定成功</strong>：关窗前程序会先把凭据存进账号、并真的查一次余额，查得通才算成功；查不通会明确提示原因（且不会自动关窗），不会再出现"窗口关了却一直显示等待登录"。</li><li>登录窗口与后台自动保活用的是<strong>同一个登录分区</strong>（platform.xiaomimimo.com），所以之后能靠会话静默续期，不用反复登录。若卡片一直显示「等待登录」，请再点一次「登录」，并确认在弹出的窗口里进到了余额页。</li></ol>
-<h3>4) New API / One API 中转站</h3>
-<ol><li>你的中转站后台（如 <code>https://你的域名</code>）生成一个令牌（一般 <code>sk-</code> 开头）。</li><li>面板里选「New API / One API 中转站」，填站点地址（<strong>只填域名，不要带 /v1</strong>）和令牌。</li><li>如有用户 ID 需求（部分站点），一并填写；没有就留空。</li></ol>
-<h3>5) 自定义（抓包填写）</h3>
-<p>适合会抓包的开发者：填写请求地址、请求头，以及余额字段的取值路径（JSON 路径），支持倍率换算。</p>
-<h3>6) 阿里云百炼 ⭐（重点，步骤较多）</h3>
+<h3>1) DeepSeek</h3>
+<ol><li>打开 <a href="https://platform.deepseek.com/" target="_blank" rel="noopener">DeepSeek 开放平台</a> ，登录后在左侧「API Keys」创建一个 Key（以 <code>sk-</code> 开头）。</li><li>面板里选「DeepSeek」，把 Key 粘贴进「API Key」栏，保存即可。</li><li>可选：「总额」填了你充值过的总额，卡片上才能算百分比，不填也能用。</li></ol>
+<h3>2) siliconflow</h3>
+<ol><li>打开 <a href="https://cloud.siliconflow.cn/" target="_blank" rel="noopener">硅基流动控制台</a> 登录（没账号先注册）。</li><li>面板里选「siliconflow」，点「登录获取 Cookie」——会弹出登录窗口，登录完成后窗口会自动关闭，程序自动抓取 Cookie。</li><li>Cookie 失效后卡片会提示「重新登录」，点卡片上的编辑 → 再点一次登录按钮即可。</li><li>说明：官方已于 2026-08-14 下线 API Key 余额接口，所以这个平台必须用「登录」方式。</li></ol>
+<h3>3) Xiaomi MIMO</h3>
+<ol><li>打开 <a href="https://platform.xiaomimimo.com/" target="_blank" rel="noopener">MiMo 开发平台</a> 登录。</li><li>面板里选「Xiaomi MIMO」，点「登录 MiMo 获取 Cookie」，会直接跳到小米账号登录页，登录完成窗口自动关闭。</li><li><strong>窗口关闭 ≠ 一定成功</strong>：关窗前程序会先把凭据存进账号、并真的查一次余额，查得通才算成功；查不通会明确提示原因（且不会自动关窗），不会再出现"窗口关了却一直显示等待登录"。</li><li>登录窗口与后台自动保活用的是<strong>同一个登录分区</strong>（platform.xiaomimimo.com），所以之后能靠会话静默续期，不用反复登录。若卡片一直显示「等待登录」，请再点一次「登录」，并确认在弹出的窗口里进到了余额页。</li></ol>
+<h3>4) 阿里云百炼 ⭐（重点，步骤较多）</h3>
 <p>阿里云余额在「费用与成本」控制台（账号级），要给它授权一台只读的访问密钥（AccessKey），步骤如下：</p>
 <p><strong>第 1 步：创建 RAM 用户（或直接用主账号，推荐新建一个）</strong></p>
 <ul><li>打开 <a href="https://ram.console.aliyun.com/users" target="_blank" rel="noopener">RAM 控制台 - 用户</a>，点「创建用户」。</li><li>登录名随便取（如 <code>panel-read</code>），访问方式勾选「OpenAPI 调用访问」。</li><li>官方教程（可对照）：<a href="https://help.aliyun.com/zh/ram/product-overview/create-and-authorize-a-ram-user" target="_blank" rel="noopener">创建 RAM 用户并授权</a></li></ul>
@@ -41,21 +37,21 @@ const docHtml = `<h1>API 余额面板 · 使用说明</h1>
 <p><strong>代金券读不到时怎么看</strong>：卡片下方小字会直接写明原因（「代金券读取失败：…」或「接口返回 N 张但无可用券（状态：…）」）；「运行日志」页搜 <code>aliyun</code> 能看到返回张数/可用张数/剩余合计，日志级别切到 debug 还能看到每张券的状态、面值、余额与到期时间。常见原因：RAM 用户没有 <code>AliyunBSSReadOnlyAccess</code> 权限、券已过期或用完、券尚未到生效时间、券属于另一个阿里云账号。</p>
 <hr/>
 <h2>三、日常使用</h2>
-<ul><li><strong>自动刷新</strong>：默认每 60 秒刷新一次（可在设置里调整 15 秒~24 小时）。程序最小化到托盘时继续刷新。</li><li><strong>低余额提醒</strong>：每个账号可单独设置「剩余低于 X 时提醒」；触发后卡片余额变黄/显示「低余额」标记，并弹系统通知。</li><li><strong>单账号刷新</strong>：点卡片右上角箭头图标；失败卡片上有点击重试按钮。</li><li><strong>趋势图</strong>：点卡片右上角趋势按钮可看余额走势（保存在本机）。</li></ul>
+<ul><li><strong>自动刷新</strong>：默认每 60 秒刷新一次（可在设置里调整 15 秒~24 小时）。程序最小化到托盘时继续刷新。</li><li><strong>低余额提醒</strong>：每个账号可单独设置「剩余低于 X 时提醒」；触发后卡片余额变黄/显示「低余额」标记，并弹系统通知。</li><li><strong>单账号刷新</strong>：点卡片右上角箭头图标；失败卡片上有点击重试按钮。</li><li><strong>趋势图</strong>：点卡片右上角趋势按钮会弹出<strong>趋势悬浮窗</strong>（固定 420px 宽），显示模型、剩余余额与余额走势；横轴固定为 <strong>1 小时 / 6 小时 / 24 小时</strong> 三档可切换，打开时按最近使用自动选轴（近 3 小时有使用 → 1 小时；当日有使用 → 6 小时；当日没用 → 24 小时），点弹窗外部或 Esc 关闭。走势数据保存在本机。</li></ul>
 <h2>四、常见问题</h2>
-<ol><li><strong>提示「网络不通」</strong>：本机解析不了平台接口域名。换网络/关代理再试；阿里云已内置选择可解析的接入点。</li><li><strong>提示「密钥错了或过期了」</strong>：DeepSeek/New API 检查 Key 是否有效；阿里云看上方对照表；MiMo/硅基流动点「重新登录」。</li><li><strong>提示「网址填错了」</strong>：New API 站点地址只填域名，不要带 <code>/v1</code>；检查是否有特殊字符。</li><li><strong>余额显示为 0 / 字段找不到</strong>：多为平台返回结构变化，把小字详情发给开发者排查。</li><li><strong>换电脑怎么带配置</strong>：拷贝 <code>%APPDATA%\\API 余额面板</code> 整个文件夹过去即可（密钥是本机加密的）。</li></ol>
+<ol><li><strong>提示「网络不通」</strong>：本机解析不了平台接口域名。换网络/关代理再试；阿里云已内置选择可解析的接入点。</li><li><strong>提示「密钥错了或过期了」</strong>：DeepSeek 检查 Key 是否有效；阿里云看上方对照表；Xiaomi MIMO / siliconflow / SenseNova 等登录型平台点「重新登录」。</li><li><strong>余额显示为 0 / 字段找不到</strong>：多为平台返回结构变化，把小字详情发给开发者排查。</li><li><strong>换电脑怎么带配置</strong>：拷贝 <code>%APPDATA%\\API 余额面板</code> 整个文件夹过去即可（密钥是本机加密的）。</li></ol>
 <hr/>
 <h2>五、隐私说明</h2>
 <ul><li>所有密钥 / Cookie 只保存在本机，使用系统级加密（Windows DPAPI）落盘，不会上传、不会进入任何日志。</li><li>程序只在每次刷新时请求各平台官方余额接口，无其他外联。</li><li>建议给阿里云等平台单独创建「只读」专用密钥，见上文授权步骤。</li></ul>
-<h3>3b) 小米 MiMo 套餐（Token Plan）</h3>
-<ul><li>「小米 MiMo」管<strong>余额</strong>（现金/赠送），「小米 MiMo 套餐」管<strong>套餐用量</strong>（用量/总额度/套餐名/有效期），两者<strong>共用同一个登录状态</strong>。</li><li>选「小米 MiMo 套餐」→ 点「登录 MiMo 获取 Cookie」会直接跳到小米账号登录页，登录完成窗口自动关闭；若你已添加过「小米 MiMo」，添加时勾选「同时添加另一个方式」可以一键把套餐卡片也加上。</li><li>卡片显示：套餐名（如 Lite）、已用 / 总额度（M Credits）、剩余量、有效期至 X 月 X 日。</li></ul>
-<h3>3c) 商汤 日日新（SenseNova · Token Plan 双积分池）</h3>
-<ul><li>在 <a href="https://platform.sensenova.cn/console" target="_blank" rel="noopener">SenseNova 控制台</a>登录一次即可；面板里选「商汤 日日新（SenseNova）」→ 点「登录并获取」，窗口会自动检测并关闭。</li><li>额度口径（与官方「账户总览」一致）：<strong>5 小时窗口</strong>（窗口到期自动重置，卡主数值/进度条取它）＋ <strong>周额度</strong>（7 天总量）＋ <strong>Flash-Lite 积分池</strong>（Flash-Lite 模型专属池，单独计量）。</li><li>注意：额度接口只认<strong>登录态</strong>（不认 API Key）。<strong>登录态真实寿命 ≈ 3 小时</strong>：服务端会话 Cookie 到期时间 = 登录时刻 + 3 小时，<strong>访问也不会顺延</strong>，平台也没有刷新会话的接口 —— 会话到期后只能重新登录（平台硬限制）。面板会在<strong>到期前 15 分钟弹通知</strong>提醒你。</li><li><strong>卡片上有两个按钮</strong>：「<strong>续期登录</strong>」（↻ 只在商汤 / 小米 MiMo 上有）用已有会话静默换新凭据，不用输密码；「<strong>重新登录</strong>」（🔑 所有登录型平台都有）直接打开该平台登录页，登录完成后自动保存并刷新卡片。</li><li><strong>会话存活期内不用反复登录</strong>：面板后台每 5 分钟检查一次，会话还能用时自动换新 token。商汤受上面 3 小时硬上限约束，到期后点卡片上的「重新登录」即可。</li></ul>
+<h3>3b) Xiaomi MIMO TokenPlan</h3>
+<ul><li>「Xiaomi MIMO」管<strong>余额</strong>（现金/赠送），「Xiaomi MIMO TokenPlan」管<strong>套餐用量</strong>（用量/总额度/套餐名/有效期），两者<strong>共用同一个登录状态</strong>。</li><li>选「Xiaomi MIMO TokenPlan」→ 点「登录 MiMo 获取 Cookie」会直接跳到小米账号登录页，登录完成窗口自动关闭；若你已添加过「Xiaomi MIMO」，添加时勾选「同时添加另一个方式」可以一键把套餐卡片也加上。</li><li>卡片显示：套餐名（如 Lite）、已用 / 总额度（M Credits）、剩余量、有效期至 X 月 X 日。</li></ul>
+<h3>3c) SenseNova（商汤 · Token Plan 双积分池）</h3>
+<ul><li>在 <a href="https://platform.sensenova.cn/console" target="_blank" rel="noopener">SenseNova 控制台</a>登录一次即可；面板里选「SenseNova」→ 点「登录并获取」，窗口会自动检测并关闭。</li><li>额度口径（与官方「账户总览」一致）：<strong>5 小时窗口</strong>（窗口到期自动重置，卡主数值/进度条取它）＋ <strong>周额度</strong>（7 天总量）＋ <strong>Flash-Lite 积分池</strong>（Flash-Lite 模型专属池，单独计量）。</li><li>注意：额度接口只认<strong>登录态</strong>（不认 API Key）。<strong>登录态真实寿命 ≈ 3 小时</strong>：服务端会话 Cookie 到期时间 = 登录时刻 + 3 小时，<strong>访问也不会顺延</strong>，平台也没有刷新会话的接口 —— 会话到期后只能重新登录（平台硬限制）。面板会在<strong>到期前 15 分钟弹通知</strong>提醒你。</li><li><strong>续期登录对商汤无效，已停用</strong>（2026-09-22 起）：商汤会话是 3 小时绝对到期，静默续期实测换不回新凭据，所以不再提供「续期登录」按钮、后台也不再尝试自动续期——到期前会有提醒，届时点卡片上的「重新登录」（🔑 所有登录型平台都有）即可。</li><li><strong>Xiaomi MIMO 仍支持续期</strong>：「续期登录」（↻ 只在 Xiaomi MIMO / TokenPlan 上有）用已有会话静默换新凭据，不用输密码；后台每 5 分钟检查一次，会话还能用时自动换新。</li></ul>
 <hr/>
-<h3>7) MiniMax（余额 = 现金 + 代金券 + 授信 − 欠费）</h3>
+<h3>5) MiniMax（余额 = 现金 + 代金券 + 授信 − 欠费）</h3>
 <ol><li>打开 <a href="https://platform.minimaxi.com/" target="_blank" rel="noopener">MiniMax 开放平台</a> 或 <a href="https://platform.minimax.cn/" target="_blank" rel="noopener">国内站</a> 登录（面板会自动识别 .com / .cn 站点）。</li><li>面板里选「MiniMax」，点「登录 MiniMax」会直接打开统一登录页，登录完成窗口自动关闭并抓取余额（现金 + 代金券 + 授信 − 欠费）。</li><li>卡片显示「可用额度」，下面分行列出：现金、代金券、授信、欠费（为 0 的项自动隐藏）。</li><li>说明：MiniMax 的「余额」不是 API Key 的预充值，而是<strong>账户钱包</strong>（可充值 + 代金券），欠费会从可用额度里扣除。</li></ol>
-<h3>8) 智谱 AI（只看余额）</h3>
-<ol><li>打开 <a href="https://bigmodel.cn/" target="_blank" rel="noopener">智谱 BigModel 开放平台</a> 登录。</li><li>面板里选「智谱 AI」，点「登录智谱」会直接打开登录页，登录完成窗口自动关闭并抓取余额（账户余额；有可用授信时会一并展示）。</li></ol>
+<h3>6) bigmodel（智谱 AI，只看余额）</h3>
+<ol><li>打开 <a href="https://bigmodel.cn/" target="_blank" rel="noopener">智谱 BigModel 开放平台</a> 登录。</li><li>面板里选「bigmodel」，点「登录智谱」会直接打开登录页，登录完成窗口自动关闭并抓取余额（账户余额；有可用授信时会一并展示）。</li></ol>
 <hr/>
 <h2>六、界面与新功能</h2>
 <h3>1) 侧边栏导航</h3>
@@ -64,13 +60,13 @@ const docHtml = `<h1>API 余额面板 · 使用说明</h1>
 <li><strong>运行日志</strong>：全部运行记录（已脱敏，可导出）。</li>
 <li><strong>主题外观</strong>：主题、背景图与玻璃效果。</li><li><strong>设置</strong>：刷新 / 每日预算与告警 / 成本折算 / 提醒 / 显示 / 数据 / 关于。</li><li><strong>使用说明</strong>：本说明的整页版（不再弹窗，直接铺满内容区）。</li></ul>
 <h3>2) 每日使用状况统计</h3>
-<ul><li>数据来自程序每次刷新自动记录的历史快照，无需额外开启；没数据时页面会提示。</li><li>口径：<strong>套餐型账号</strong>（如小米 MiMo 套餐）直接用「已用」增量；<strong>余额型账号</strong>按「剩余变化」估算（中途充值会掩盖消耗，仅供参考）。</li><li><strong>停机期间消耗</strong>：如果中间彻底退出过软件（关窗缩到托盘不算），重新打开后这段余额下降无法按天归属，会单独列在表格的「停机期间」列、并在日历对应日子打上 <strong>⏸</strong> 标记；它<strong>已计入「合计（含停机）」</strong>（逐日之和 + 停机期间），但<strong>不计入每日均值、耗尽预估和预算判断</strong>（避免把多天消耗堆到重新打开的那一天）。</li><li><strong>近 7 天</strong>：消耗信息卡 + 按单位柱状图 + 账号×日期明细表。</li><li><strong>近 30 天</strong>：日历形态——按自然月展示，格子颜色越深当天消耗越多（按主单位归一化）；每月顶部显示<strong>每月消耗合计、消耗最多的日期、消耗最多的账号</strong>；点击任意有数据的天，弹窗显示当天每个账号的用量明细和单位合计。</li></ul>
+<ul><li>数据来自程序每次刷新自动记录的历史快照，无需额外开启；没数据时页面会提示。「今日消耗最多」与明细表排序<strong>按折算金额比较</strong>（积分折元、美元折元），展示仍用各自原单位原值。</li><li>口径：<strong>套餐型账号</strong>（如 Xiaomi MIMO TokenPlan）直接用「已用」增量；<strong>余额型账号</strong>按「剩余变化」估算（中途充值会掩盖消耗，仅供参考）。</li><li><strong>停机期间消耗</strong>：如果中间彻底退出过软件（关窗缩到托盘不算），重新打开后这段余额下降无法按天归属，会单独列在表格的「停机期间」列、并在日历对应日子打上 <strong>⏸</strong> 标记；它<strong>已计入「合计（含停机）」</strong>（逐日之和 + 停机期间），但<strong>不计入每日均值、耗尽预估和预算判断</strong>（避免把多天消耗堆到重新打开的那一天）。</li><li><strong>近 7 天</strong>：消耗信息卡 + 按单位柱状图 + 账号×日期明细表。</li><li><strong>近 30 天</strong>：日历形态——按自然月展示，格子颜色越深当天消耗越多（按主单位归一化）；每月顶部显示<strong>每月消耗合计、消耗最多的日期、消耗最多的账号</strong>；点击任意有数据的天，弹窗显示当天每个账号的用量明细和单位合计。</li></ul>
 <h3>3) 余额耗尽预估</h3>
 <ul><li>按近 7 天日均消耗外推剩余可用天数；只有 ≥2 天有效数据才会推算。</li><li>概览页卡片上会显示「预计 MM-DD 耗尽 · 约剩 N 天」（&lt;3 天红、&lt;7 天黄）；每日使用状况页也会列出每个账号的预计耗尽日期。</li></ul>
 <h3>4) 导出 CSV</h3>
 <ul><li>每日使用状况页右上角「导出 CSV」：账号 × 日期全量明细 + 按单位合计，含 BOM，Excel 直接打开不乱码。</li></ul>
 <h3>5) 平台用量统计</h3>
-<ul><li>按平台类型 × 单位聚合（对应「每日使用状况」的账号级口径），支持近 7 / 30 天切换。</li><li><strong>「折合人民币」只折算积分型平台</strong>（商汤这类）：元 / 美元单位本身就是金额，直接看数字，所以那些行留空；积分与元数量级差很多（100 万积分 vs 几块钱），所以积分按「设置 → 成本折算」的折算率换成人民币参与对比条。</li><li>默认折算率 <strong>111111</strong>（1 元 ≈ 11.11 万积分，即 <strong>100 万积分 ≈ 9 元</strong>），按 DeepSeek flash 高峰价反推；它只是比较用的估算基线，不是平台官方汇率，也不代表真实扣费。可在「设置 → 成本折算」修改，填 0 = 不折算。以后新增积分型平台会自动走同一套逻辑。</li><li>顶部信息卡：总消耗（分单位）、积分折合人民币（估算，只在有积分型平台时显示）、消耗最多平台、今日消耗。</li><li>平台消耗对比条形图 + 平台×日期明细表（含今日、7日均、合计、折合人民币），支持导出 CSV。</li></ul>
+<ul><li>按平台类型 × 单位聚合（对应「每日使用状况」的账号级口径），支持近 7 / 30 天切换。</li><li><strong>「折合人民币」只折算积分型平台</strong>（SenseNova 这类）：元 / 美元单位本身就是金额，直接看数字，所以那些行留空；积分与元数量级差很多（100 万积分 vs 几块钱），所以积分按「设置 → 成本折算」的折算率换成人民币参与对比条；美元按实时汇率折成人民币参与对比。展示仍用各自原单位。</li><li>默认折算率 <strong>111111</strong>（1 元 ≈ 11.11 万积分，即 <strong>100 万积分 ≈ 9 元</strong>），按 DeepSeek flash 高峰价反推；它只是比较用的估算基线，不是平台官方汇率，也不代表真实扣费。可在「设置 → 成本折算」修改，填 0 = 不折算。以后新增积分型平台会自动走同一套逻辑。</li><li>顶部信息卡：总消耗（分单位）、积分折合人民币（估算，只在有积分型平台时显示）、消耗最多平台、今日消耗。</li><li>平台消耗对比条形图 + 平台×日期明细表（含今日、7日均、合计、折合人民币），支持导出 CSV。</li></ul>
 <h3>5.1) 表格里的颜色都是什么意思</h3>
 <ul><li><strong>「停机期间」列</strong>：软件没运行时那段余额下降，跨了多天无法按天归属 ⇒ 单独列一列，已计入「合计（含停机）」，但<strong>不计入</strong>日均、耗尽预估与预算判断。</li><li><strong>「充值」</strong>：当天余额反而增加了（疑似充值），充值会掩盖消耗，所以那天算不出消耗，这一格不代表用量。</li><li><strong>「预计耗尽」</strong>：按近 7 天日均外推的剩余可用天数，仅供参考。</li><li>表格<strong>不用颜色区分</strong>，鼠标停在单元格上会写明具体数值与原因。</li></ul>
 <h3>6) 浅色主题</h3>

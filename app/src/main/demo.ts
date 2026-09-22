@@ -31,11 +31,11 @@ interface DemoDef {
 
 const DEFS: DemoDef[] = [
   { id: 'demo-deepseek', name: '示例 · DeepSeek', type: 'deepseek', unit: 'CNY', start: 92.5, daily: 1.6 },
-  { id: 'demo-siliconflow', name: '示例 · 硅基流动', type: 'siliconflow', unit: 'CNY', start: 48.0, daily: 2.4, unstable: true },
-  { id: 'demo-mimo', name: '示例 · 小米 MiMo', type: 'mimo', unit: 'CNY', start: 30.0, daily: 0.8 },
+  { id: 'demo-siliconflow', name: '示例 · siliconflow', type: 'siliconflow', unit: 'CNY', start: 48.0, daily: 2.4, unstable: true },
+  { id: 'demo-mimo', name: '示例 · Xiaomi MIMO', type: 'mimo', unit: 'CNY', start: 30.0, daily: 0.8 },
   { id: 'demo-minimax', name: '示例 · MiniMax', type: 'minimax', unit: 'CNY', start: 16.0, daily: 0.6 },
-  { id: 'demo-zhipu', name: '示例 · 智谱', type: 'zhipu', unit: 'CNY', start: 20.0, daily: 0.35 },
-  { id: 'demo-mimo-plan', name: '示例 · MiMo 套餐', type: 'mimo-plan', unit: 'M Credits', start: 4100, daily: 42 }
+  { id: 'demo-zhipu', name: '示例 · bigmodel', type: 'zhipu', unit: 'CNY', start: 20.0, daily: 0.35 },
+  { id: 'demo-mimo-plan', name: '示例 · MIMO TokenPlan', type: 'mimo-plan', unit: 'M Credits', start: 4100, daily: 42 }
 ]
 
 const DAY_MS = 24 * 60 * 60 * 1000

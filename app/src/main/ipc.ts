@@ -17,7 +17,7 @@ import { getFx } from './fx'
 import { clearLogs, exportLogs, getLogLevel, listLogFiles, logger, readLogs, setLogLevel } from './logger'
 import { CONFIG_FILE, DATA_DIR, LOG_DIR } from './paths'
 import { invalidateCache, refresh, renewForAccount } from './query'
-import { jwtExpiry, supportsRenewal } from './renewal'
+import { autoRenewable, jwtExpiry, supportsRenewal } from './renewal'
 import { closeWindow, isWindowMaximized, minimizeWindow, toggleMaximizeWindow } from './window'
 import { scheduler } from './scheduler'
 import { buildDailyUsage, buildPlatformUsage, buildUsageReport, dailyConsumedDetailed, daySlices, gapLimitMs, isUsageBased } from './usage'
@@ -276,9 +276,13 @@ export function registerIpc(): void {
       logger.info(
         `[ipc] 账号 ${p.accountId} 已保存登录凭据（续期材料：${session ? session.cookies.split('; ').filter(Boolean).length + ' 个 Cookie' : '无'}；凭据有效至 ${exp ? new Date(exp).toLocaleString('zh-CN') : '未知'}）`
       )
-      // 走到这里说明 verifyAfterSave 里两步复验都过了（能查到数 + 自动续期可用）
-      if (supportsRenewal(store.getAccount(p.accountId)?.type ?? '')) {
+      // 走到这里说明 verifyAfterSave 里两步复验都过了（能查到数）
+      const accType = store.getAccount(p.accountId)?.type ?? p.platform ?? ''
+      if (autoRenewable(accType)) {
         renewHint = '自动续期已验证可用（登录窗口与后台保活共用同一分区）'
+      } else if (supportsRenewal(accType)) {
+        // 商汤：会话为 3 小时绝对到期、续期实测无效 → 如实说明，不再吹「自动续期可用」
+        renewHint = '该平台登录态约 3 小时硬到期、无法自动续期，到期前会弹提醒，届时点卡片「重新登录」即可'
       }
     }
     return {
@@ -286,7 +290,9 @@ export function registerIpc(): void {
       cookie: result.cookie,
       error: result.error,
       // 告诉界面：这个平台是否具备"自动续期"能力（用于提示文案）
-      canRenew: Boolean(rule?.cookieUrls),
+      canRenew:
+        Boolean(rule?.cookieUrls) &&
+        autoRenewable((typeof p.accountId === 'string' ? store.getAccount(p.accountId)?.type : undefined) ?? p.platform ?? ''),
       renewHint
     }
   }
@@ -354,8 +360,8 @@ export function registerIpc(): void {
     if (!id) throw new Error('缺少账号 id')
     const account = store.getAccount(id)
     if (!account) throw new Error('账号不存在')
-    if (!supportsRenewal(account.type)) {
-      return { ok: false, error: '该平台不支持静默续期（只有登录型平台支持）', needLogin: false, expiresAt: null }
+    if (!autoRenewable(account.type)) {
+      return { ok: false, error: '该平台不支持静默续期（会话到期请点「重新登录」）', needLogin: false, expiresAt: null }
     }
     const ok = await renewForAccount(account, 'manual')
     const after = store.getAccount(id)
