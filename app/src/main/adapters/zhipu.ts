@@ -2,7 +2,7 @@ import { ZHIPU_ACCOUNT_URL } from '../../shared/constants'
 import { AdapterError, mapHttpStatus } from '../errors'
 import { request } from '../http'
 import type { Adapter } from './types'
-import { dig, num, okResult, safeJson } from './util'
+import { assertNotExpired, dig, num, okResult, safeJson } from './util'
 
 /**
  * 智谱 AI（bigmodel.cn）余额（Cookie + Authorization JWT）。
@@ -14,7 +14,7 @@ import { dig, num, okResult, safeJson } from './util'
  *
  * 注意：Authorization 不是 Bearer、也没有「token 」前缀，就是那个 JWT 本身。
  */
-export function tokenFromCookie(cookie: string): string | null {
+function tokenFromCookie(cookie: string): string | null {
   const m = cookie.match(/(?:^|;\s*)bigmodel_token_production=([^;]+)/)
   return m ? m[1] : null
 }
@@ -35,7 +35,7 @@ export const zhipuAdapter: Adapter = async (account, ctx) => {
       Referer: 'https://bigmodel.cn/finance-center/finance/overview'
     }
   })
-  if (r.status === 401 || r.status === 403) throw new AdapterError('COOKIE_EXPIRED', String(r.status))
+  assertNotExpired(r, '请重新登录智谱')
   if (r.status !== 200) throw new AdapterError(mapHttpStatus(r.status), r.text.slice(0, 160))
   const j = safeJson(r.text, ZHIPU_ACCOUNT_URL)
   const code = dig(j, 'code')

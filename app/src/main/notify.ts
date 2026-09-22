@@ -28,7 +28,7 @@ function allow(key: string, times: number): boolean {
   return store.getNoticeState(key).count < times
 }
 
-/** 取每个账号最近的快照（按 ts 升序，最多保留末尾两条） */
+/** 取每个账号最近的快照（按 ts 升序，每个账号最多保留末尾 40 条） */
 function tailByAccount(snaps: Snapshot[]): Map<string, Snapshot[]> {
   const sorted = snaps.filter((s) => s && s.ok !== undefined).sort((a, b) => a.ts - b.ts)
   const map = new Map<string, Snapshot[]>()

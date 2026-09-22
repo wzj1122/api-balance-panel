@@ -3,7 +3,7 @@ import type { BalanceItem } from '../../shared/types'
 import { AdapterError, mapHttpStatus } from '../errors'
 import { request } from '../http'
 import type { Adapter } from './types'
-import { num, okResult } from './util'
+import { assertNotExpired, num, okResult } from './util'
 
 /**
  * 商汤 日日新（SenseNova）· Token Plan 额度。
@@ -48,7 +48,7 @@ interface Pool {
 }
 
 /** 秒级时间戳（字符串）→ 本地时间文案 */
-export function fmtResetAt(v: unknown): string {
+function fmtResetAt(v: unknown): string {
   const ts = num(v)
   if (ts === null || ts <= 0) return ''
   const d = new Date(ts * 1000)
@@ -68,9 +68,7 @@ export const sensenovaAdapter: Adapter = async (account, ctx) => {
       Accept: 'application/json'
     }
   })
-  if (r.status === 401 || r.status === 403) {
-    throw new AdapterError('COOKIE_EXPIRED', '登录态已过期，请重新点「登录」')
-  }
+  assertNotExpired(r, '请重新点「登录」')
   if (r.status !== 200) {
     throw new AdapterError(mapHttpStatus(r.status), r.text.slice(0, 160))
   }

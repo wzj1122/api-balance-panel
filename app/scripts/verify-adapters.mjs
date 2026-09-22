@@ -1,6 +1,7 @@
 /**
  * 适配器 + 并发池 + 错误映射 验证脚本（本地 mock，不需要真实密钥）。
  * 运行：node scripts/verify-adapters.mjs
+ * 依赖 esbuild（当前由 vite 传递提供）。
  *
  * 原理：用 esbuild 把纯逻辑源码（adapters / runPool / errors）打成临时 ESM，
  * 再用 stub 掉的 globalThis.fetch 提供各家平台的假响应，断言解析结果与错误文案。

@@ -2,6 +2,44 @@
 
 本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)；格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [1.6.0] - 2026-09-22
+
+依据全项目审查报告（死代码 / 无用按钮 / 功能优化）一次性落地四个批次的整改：
+
+### 修复（真实缺陷，含 3 个 P0）
+- **「一键重新登录」整个功能是断的**：渲染层 IPC 分发缺 `account:relogin` 分支，按钮每次报「未知的 IPC 通道」、登录窗口根本打不开（v1.4.0 引入即失效）——补齐并改为直调（见下方重构，此类断链不再可能发生）
+- **删除账号每次误报「删除失败」**：主进程返回裸 `boolean` 与契约 `{ok}` 不符——账号其实已删但界面报错且卡片残留
+- **平台用量页「折合人民币」的「？」说明从不显示**：模板用了 `InfoTip` 但漏 import，生产构建静默渲染为空
+- 设置项「请求超时 / 快照保留天数」改了不生效（业务只读默认常量）——现真正生效
+- 退出丢快照：退出前不落盘 + 写盘旗标吞并发写——退出前强制 flush，写盘改排队补写不丢数据
+- 回收站账号一被编辑就「复活」成普通账号（保存时弄丢 `deleted_at`）——已保留
+- 静默续期竞态：保活/临期/401/手动可同时触发、并发开隐藏窗互踩 Cookie——同账号互斥去重
+- 数据校正页：「（已校正）」标记永不显示（改为拼进下拉文案）；「将整体平移」警示样式恒真条件修复
+- 使用报告「消耗最多的一天」串单位（按所有单位混算取峰值）——改为按单位统计；「活跃天数」同口径修正
+- 假成功/静默失败收口：保存失败不再亮「✓ 已保存」（设置/主题/分类重命名等）；删除/切换/清空失败补提示；「保存账号」防重复提交；双账号保存中途失败如实告知已保存几条
+- keys.json / monitors.json / monitor-history.json 损坏改为**归档重建**（`*.corrupt-<ts>.json`），不再静默清零覆盖
+- 校正记录「影响快照」条数忽略结束时间；主窗口加载失败留痕；日志导出说明与实现不符修正
+
+### 安全
+- IPC 加发送方校验（仅主窗口可调用全部通道）；错误回抛前脱敏本地路径；取出明文密钥记入运行日志审计；背景图读取加扩展名白名单；contextIsolation 被误关时直接中止加载（不再静默降级）
+- 危险操作补确认：批量移入回收站、复制/导出密钥明文、重置外观；全部原生对话框统一为应用内确认/输入弹窗（14 处 `window.confirm`、2 处 `prompt`、3 处 `alert` 清零）
+
+### 移除（死代码清理，约 40 组）
+- 死组件 `TopBar.vue`（0 引用、与 TitleBar 重复）、一次性调试脚本 `diag-renderer.js`（移入归档）
+- 主进程 14 组死代码：`hasCorrection` / `resetCorrectionCache` / `LOG_OLD_FILE` / `Scheduler.toggle` /「自动关窗 success 规则」整条链 / `apiHeaders` 恒空分支 / `tokenLen、v、scale、group、cycleStartTs、refreshSeconds、Snapshot.source` 等只写不读字段 / browser 3 个死变量 / 6 处孤儿注释
+- 渲染层：TrendChart 自适应轴不可达分支、5 处死 CSS（`.plat-card` / `.avail-pane` / 永不匹配的 `.help-pane > .pane-scroll` / `.seg.small` / 重复 `.ck`）、`csvCell` / `SYSTEM_THEME` 冗余导出
+- 25 处过度导出收回；2 条永不到达的 IPC 兼容分支删除
+
+### 重构 / 去重
+- **IPC 直调化**：删除 safeInvoke 通道镜像 switch（50 个 case），封装函数直调 `window.api`——同一通道此前要在 5 处同步维护，「重新登录」断链正是镜像漂移的产物；`saveAccount` 双实现合并
+- 新增 `utils/text.ts`（formatBytes / providerLabel / dateStamp）、`utils/download.ts`、`useFlash` / `useClipboard` / `useConfirm`、`ConfirmDialog`
+- 收敛 20+ 处跨文件重复：typeLabel ×5、flash 提示 ×4、剪贴板 ×3、文件下载 ×3、sizeText ×2、`.seg` 样式 ×5、`.gap-note` ×2、`normalizeTags` ×2、`isPlainObject/numOrNull` ×2、401→COOKIE_EXPIRED 判定 ×6、双方案解密回退 ×4、usage 重复声明（Flows / round4v）
+
+### 性能 / 工程化
+- config.json 备份节流（`.bak` 最多 10 分钟一次，原子写保证不变）；缓存命中行不再重复写快照；主题预览 12 张并行加载；日志页无变化不重渲染、展开状态改按内容键；App 传参数组缓存
+- tsconfig 开启 `noUnusedLocals` / `noUnusedParameters`（连带清掉 11 处存量未用声明）；`esbuild` 显式声明为 devDependency；`package.json` 新增 `verify` / `verify-adapters` 回归入口
+- 文档纠偏：使用说明页 / README 的刷新间隔、托盘行为、引导步数、设置菜名等失实文案全部修正
+
 ## [1.5.0] - 2026-09-22
 
 一次性修复/改进五批内容（用户同批提出、全部落地）：

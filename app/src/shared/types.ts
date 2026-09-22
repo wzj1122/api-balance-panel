@@ -167,10 +167,6 @@ export interface CredentialSession {
   cookies: string
   /** localStorage 里的登录态键名，供续期窗口比对 */
   tokenKey: string
-  /** 上次抓取时登录态的长度（只用于判断"有没有变化"，不用于还原） */
-  tokenLen: number
-  /** 格式版本，便于以后调整结构 */
-  v: number
 }
 
 /** 一个被监控的账号（磁盘上的形态） */
@@ -180,8 +176,6 @@ export interface Account {
   type: AccountType
   /** 默认 true；false 不查询、不展示 */
   enabled: boolean
-  /** 一期不用，保留 */
-  group?: string
   /** 磁盘上的密文（base64），明文永不落盘 */
   secret_enc: string | null
   /** 界面展示用，如 sk-****1234 */
@@ -204,8 +198,6 @@ export interface Account {
   request?: CustomRequest
   /** custom 必填 */
   extract?: CustomExtract
-  /** custom 倍率，默认 1（custom 以 extract.scale 为准） */
-  scale?: number
   /** 低余额阈值，null = 用全局默认 */
   threshold?: number | null
   notice_enabled?: boolean
@@ -295,7 +287,6 @@ export interface BalanceRow extends BalanceResult {
 export interface PanelPayload {
   rows: BalanceRow[]
   ts: number
-  refreshSeconds: number
 }
 
 // ---------- Snapshot（落盘，snake_case） ----------
@@ -320,7 +311,6 @@ export interface Snapshot {
   note: string
   items: SnapshotItem[]
   latency_ms: number
-  source: 'live' | 'cache'
   /** 该条是否套用了手动校正（读出口标记，不落盘） */
   adjusted?: boolean
 }
@@ -348,8 +338,6 @@ export interface Settings {
   // ---------- 每日预算 ----------
   /** 每日预算上限：单位 → 金额（0 或缺省 = 不限） */
   daily_budget: Record<string, number>
-
-  // ---------- 可用性监控 ----------
 
   // ---------- 提醒增强 ----------
   /** 余额骤降告警阈值（百分比，0 = 关闭） */
@@ -385,9 +373,6 @@ export interface Settings {
   /** 玻璃通透度：越小越透（0.3~0.95） */
   glass_alpha: number
 }
-
-
-// ---------- 可用性监控 ----------
 
 // ---------- AI 使用报告（只基于金额） ----------
 
@@ -642,8 +627,6 @@ export interface DailyAccount {
   suggestedThreshold: number | null
   /** 累计总额（进度条分母）：余额每上升一次就把增量累加进来，充值后自动进入新一轮 */
   creditTotal: number | null
-  /** 最近一次余额上升（充值）的时间——趋势图据此只画当前这一轮 */
-  cycleStartTs: number | null
   /** 最近 N 天每日消耗 */
   days: (number | null)[]
   /** 今日消耗 */
@@ -655,8 +638,6 @@ export interface DailyAccount {
   /** 预计耗尽时间戳（ms，null = 无法推算） */
   estEmptyTs: number | null
 }
-
-/** 每日使用状况报告（主进程按快照聚合） */
 
 /** 平台用量统计（按平台类型 × 单位聚合的每日消耗） */
 export interface PlatformUsageRow {

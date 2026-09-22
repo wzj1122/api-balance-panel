@@ -20,6 +20,7 @@ import UsageReportView from '@renderer/components/UsageReportView.vue'
 import BudgetBar from '@renderer/components/BudgetBar.vue'
 import OnboardingGuide from '@renderer/components/OnboardingGuide.vue'
 import { backgroundData, backgroundForTheme, listDailyUsage, reloginAccount, renewAccount, setDemoMode } from '@renderer/api/ipc'
+import { useConfirm } from '@renderer/composables/useConfirm'
 import { resolveTheme } from '@renderer/utils/theme'
 
 const {
@@ -57,8 +58,16 @@ const renewingIds = ref<Set<string>>(new Set())
 const reloggingIds = ref<Set<string>>(new Set())
 /** 续期 / 重新登录的结果提示（顶部小字，几秒后自动消失） */
 const renewMsg = ref('')
+/** 统一对话框（替代原生 window.confirm）；ConfirmHost 挂在模板里，全应用只此一份 */
+const { confirm, ConfirmHost } = useConfirm()
 /** 跳到「数据校正」页时预选的账号 */
 const correctionAccountId = ref('')
+
+/** 顶部横幅提示（8 秒后自动消失）：替代原 window.alert 的失败提示（根组件没有独立消息区） */
+function showBanner(text: string): void {
+  renewMsg.value = text
+  setTimeout(() => { if (renewMsg.value === text) renewMsg.value = '' }, 8000)
+}
 
 /** 打开数据校正页（可带账号预选）：其它页面的「校正」入口统一走这里 */
 function openCorrection(accountId?: string): void {
@@ -261,6 +270,9 @@ async function loadBudget() {
   }))
 }
 
+/** 传给 SettingsDialog 的单位列表（computed 缓存引用，避免每次渲染都生成新数组） */
+const budgetUnits = computed(() => budgetRows.value.map((b) => b.unit))
+
 /** 首次启动（没有账号且没完成过引导）时弹出新手引导 */
 function checkOnboard() {
   showOnboard.value = !demoOn.value && accounts.value.length === 0 && settings.value?.onboarded !== true
@@ -334,14 +346,16 @@ async function onSave(payload: AccountInput) {
   }
 }
 
-/** 一次保存多个账号（MiMo 余额 + 套餐），全部成功才关弹窗 */
+/** 一次保存多个账号（MiMo 余额 + 套餐）：逐条落盘，中途失败如实告知已保存几条（已落盘的不回滚） */
 async function onSaveBoth(payloads: AccountInput[]) {
+  let saved = 0
   for (const p of payloads) {
     const r = await saveAccount(p)
     if (!r.ok) {
-      dialogError.value = r.error ?? '保存失败'
+      dialogError.value = (saved > 0 ? `前 ${saved} 个账号已保存；` : '') + '保存失败：' + (r.error ?? '未知原因')
       return
     }
+    saved++
   }
   showAdd.value = false
   dialogError.value = null
@@ -350,15 +364,15 @@ async function onSaveBoth(payloads: AccountInput[]) {
 async function onRemove(id: string) {
   const acc = accounts.value.find((a) => a.id === id)
   if (!acc) return
-  const ok = window.confirm('确定删除账号「' + acc.name + '」？此操作不可恢复。')
+  const ok = await confirm('确定删除账号「' + acc.name + '」？此操作不可恢复。', { title: '删除账号', danger: true })
   if (!ok) return
   const r = await removeAccount(id)
-  if (!r.ok && r.error) window.alert('删除失败：' + r.error)
+  if (!r.ok && r.error) showBanner('删除失败：' + r.error)
 }
 
 async function onSettingsSave(patch: Parameters<typeof saveSettings>[0]) {
   const r = await saveSettings(patch)
-  if (!r.ok && r.error) window.alert('保存失败：' + r.error)
+  if (!r.ok && r.error) showBanner('保存失败：' + r.error)
   return r
 }
 </script>
@@ -460,7 +474,7 @@ async function onSettingsSave(patch: Parameters<typeof saveSettings>[0]) {
           v-else-if="view === 'settings'"
           :settings="settings"
           :app-info="appInfo"
-          :units="budgetRows.map((b) => b.unit)"
+          :units="budgetUnits"
           @save="onSettingsSave"
         />
       </div>
@@ -483,6 +497,9 @@ async function onSettingsSave(patch: Parameters<typeof saveSettings>[0]) {
       @add-account="closeOnboard(); openAdd()"
       @demo="enterDemo"
     />
+
+    <!-- 统一对话框宿主（confirm / prompt 共用，全应用只挂一次） -->
+    <ConfirmHost />
   </div>
 </template>
 

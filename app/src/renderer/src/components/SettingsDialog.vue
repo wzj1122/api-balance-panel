@@ -6,8 +6,11 @@ import type { AppInfo, Settings } from '@shared/types'
 import { creditsToCny, hasCreditRate, rateText } from '@shared/cost'
 import { fmtMoney } from '@shared/format'
 import { exportBackup, getAutoStartStatus, importBackup, openDataDir } from '@renderer/api/ipc'
+import { useConfirm } from '@renderer/composables/useConfirm'
 import InfoTip from './InfoTip.vue'
 import SelectMenu from './SelectMenu.vue'
+
+const { confirm } = useConfirm()
 
 const props = defineProps<{
   settings: Settings | null
@@ -69,8 +72,14 @@ async function onToggleAutoStart(e: Event): Promise<void> {
 
 /** 主题：点一下立即生效并保存（与「主题外观」页同一套主题，双向联动） */
 async function pickTheme(t: string): Promise<void> {
+  const prev = local.theme
   local.theme = t
-  await emit('save', { theme: t })
+  const r = await emit('save', { theme: t })
+  // 保存失败要回滚选择、不再亮「已保存」（失败详情由 App 层统一 alert）
+  if (r && r.ok === false) {
+    local.theme = prev
+    return
+  }
   savedFlash.value = true
   if (savedTimer) clearTimeout(savedTimer)
   savedTimer = setTimeout(() => { savedFlash.value = false }, 1800)
@@ -142,8 +151,8 @@ function refreshLabel(sec: number): string {
   return Number.isInteger(m) ? m + ' 分钟' : (sec / 60).toFixed(1) + ' 分钟'
 }
 
-function onSave() {
-  emit('save', {
+async function onSave() {
+  const r = await emit('save', {
     refresh_seconds: local.refresh_seconds,
     pause_when_hidden: local.pause_when_hidden,
     default_threshold: local.default_threshold,
@@ -156,6 +165,8 @@ function onSave() {
     credits_per_cny: Number.isFinite(local.credits_per_cny) ? Math.max(0, local.credits_per_cny) : 0,
     daily_budget: JSON.parse(JSON.stringify(local.daily_budget ?? {}))
   })
+  // 按真实结果提示：保存失败不再亮「✓ 已保存」（失败 alert 由 App 层统一给出）
+  if (r && r.ok === false) return
   savedFlash.value = true
   if (savedTimer) clearTimeout(savedTimer)
   savedTimer = setTimeout(() => { savedFlash.value = false }, 1800)
@@ -174,15 +185,15 @@ async function onExport() {
 }
 
 async function onImport() {
-  const sure = window.confirm('导入备份会覆盖当前全部账号与设置（原配置会自动另存一份）。确定继续？')
+  const sure = await confirm('导入备份会覆盖当前全部账号与设置（原配置会自动另存一份）。确定继续？', { title: '导入备份', danger: true })
   if (!sure) return
   backupMsg.value = '正在导入…'
   const r = await importBackup()
   const msg = r.ok ? r.data.message : '导入失败：' + (r.error ?? '')
   backupMsg.value = msg
   if (r.ok && r.data.ok) {
-    window.alert(msg)
-    window.location.reload()
+    // 原 window.alert(msg) 改为就近消息区（backupMsg）提示；稍等再整体刷新，让提示可见
+    setTimeout(() => { window.location.reload() }, 1500)
   }
 }
 </script>
@@ -405,9 +416,8 @@ async function onImport() {
 .hint-inline { font-size: var(--fs-foot); color: var(--tx3); line-height: 1.7; }
 .hint.err-hint { color: var(--warn); }
 .hint.ok-hint { color: var(--ok); }
-.seg { display: inline-flex; gap: 4px; background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 3px; }
-.seg button { border: none; background: transparent; color: var(--tx2); font-size: var(--fs-sub); font-weight: 500; padding: 5px 14px; border-radius: 8px; cursor: pointer; transition: background var(--dur) ease, color var(--dur) ease; }
-.seg button.on { background: var(--card); color: var(--acc); font-weight: 600; box-shadow: var(--shadow-sm); }
+/* .seg 基础样式在 global.css；这里只留差异（按钮更宽） */
+.seg button { padding: 5px 14px; }
 .declare { font-size: var(--fs-sub); color: var(--tx3); line-height: 1.7; border-left: 2px solid var(--line-strong); padding-left: 12px; margin-top: 4px; }
 .saved-ok { color: var(--ok); font-size: var(--fs-sub); font-weight: 600; margin-top: 4px; }
 </style>

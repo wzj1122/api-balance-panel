@@ -2,11 +2,17 @@
 import { onMounted, ref } from 'vue'
 import type { Settings } from '@shared/types'
 import { backgroundData, importBackground, listBackgrounds, removeBackground } from '@renderer/api/ipc'
+import { formatBytes } from '@renderer/utils/text'
+import { useFlash } from '@renderer/composables/useFlash'
+import { useConfirm } from '@renderer/composables/useConfirm'
 import InfoTip from './InfoTip.vue'
 import SelectMenu from './SelectMenu.vue'
 
 const props = defineProps<{ settings: Settings | null }>()
 const emit = defineEmits<{ (e: 'save', patch: Partial<Settings>): Promise<{ ok: boolean; error?: string }> }>()
+
+const { msg, flash } = useFlash()
+const { confirm } = useConfirm()
 
 interface ThemeDef { slug: string; name: string; desc: string }
 
@@ -31,7 +37,6 @@ const THEMES: ThemeDef[] = [
 
 const files = ref<{ name: string; size: number; builtin: boolean }[]>([])
 const previews = ref<Record<string, string>>({})
-const msg = ref('')
 
 const fitOptions = [
   { value: 'cover', label: '铺满（裁切）' },
@@ -43,22 +48,21 @@ async function loadFiles() {
   const r = await listBackgrounds()
   if (!r.ok) return
   files.value = r.data.files
-  for (const f of files.value.slice(0, 12)) {
-    if (previews.value[f.name]) continue
-    const d = await backgroundData(f.name)
-    if (d.ok && d.data.dataUrl) previews.value[f.name] = d.data.dataUrl
-  }
+  // 预览并行加载（此前串行 await 最多 12 次往返，打开页面要等一串）
+  await Promise.all(
+    files.value.slice(0, 12).map(async (f) => {
+      if (previews.value[f.name]) return
+      const d = await backgroundData(f.name)
+      if (d.ok && d.data.dataUrl) previews.value[f.name] = d.data.dataUrl
+    })
+  )
 }
 onMounted(loadFiles)
 
-function flash(t: string) {
-  msg.value = t
-  setTimeout(() => { if (msg.value === t) msg.value = '' }, 3000)
-}
-
-/** 一键恢复默认外观（看不清文字时的逃生通道） */
-function resetAppearance() {
-  emit('save', {
+/** 一键恢复默认外观（看不清文字时的逃生通道）：一次覆盖 7 项设置，先确认，再按真实结果提示 */
+async function resetAppearance() {
+  if (!(await confirm('重置为默认外观？将覆盖当前的主题、背景与玻璃设置（账号与数据不受影响）。', { title: '重置外观', danger: true }))) return
+  const r = await emit('save', {
     theme: 'dark',
     bg_enabled: false,
     glass_enabled: false,
@@ -67,11 +71,13 @@ function resetAppearance() {
     glass_blur: 16,
     bg_dim: 35
   })
+  if (r && r.ok === false) { flash('重置失败：' + (r.error ?? '未知原因')); return }
   flash('已重置为默认外观（深色主题 / 关闭背景与玻璃）')
 }
 
-function pickTheme(slug: string) {
-  emit('save', { theme: slug })
+async function pickTheme(slug: string) {
+  const r = await emit('save', { theme: slug })
+  if (r && r.ok === false) flash('切换主题失败：' + (r.error ?? '未知原因'))
 }
 
 async function onImport() {
@@ -86,17 +92,15 @@ async function onImport() {
 }
 
 async function onRemove(name: string) {
-  if (!window.confirm('删除背景图「' + name + '」？')) return
+  if (!(await confirm('删除背景图「' + name + '」？', { title: '删除背景图', danger: true }))) return
   const r = await removeBackground(name)
-  if (r.ok) {
+  if (r.ok && r.data.ok) {
     if (props.settings?.bg_file === name) emit('save', { bg_file: '', bg_enabled: false })
     await loadFiles()
     flash('已删除')
+  } else {
+    flash('删除失败：' + (r.ok ? '主进程返回失败' : r.error))
   }
-}
-
-function sizeText(n: number): string {
-  return n > 1024 * 1024 ? (n / 1024 / 1024).toFixed(1) + ' MB' : Math.round(n / 1024) + ' KB'
 }
 </script>
 <template>
@@ -160,7 +164,7 @@ function sizeText(n: number): string {
           <div class="bg-thumb" :style="previews[f.name] ? { backgroundImage: 'url(' + previews[f.name] + ')' } : {}"></div>
           <div class="bg-meta">
             <span class="bg-name" :title="f.name">{{ f.name }}</span>
-            <span class="muted">{{ sizeText(f.size) }}</span>
+            <span class="muted">{{ formatBytes(f.size) }}</span>
           </div>
           <div class="bg-ops">
             <button class="btn ghost tiny" type="button" @click="emit('save', { bg_file: f.name, bg_enabled: true })">使用</button>

@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import type { DailyAccount, DailyUsageReport, Settings } from '@shared/types'
-import { PROVIDER_META } from '@shared/constants'
 import { fmtNumber } from '@shared/format'
 import { compareWeight } from '@shared/cost'
 import { getFx, listDailyUsage } from '@renderer/api/ipc'
 import { downloadCsv, todayStamp } from '@renderer/utils/csv'
+import { providerLabel } from '@renderer/utils/text'
 import BaseModal from './BaseModal.vue'
 import UsageCalendar from './UsageCalendar.vue'
 
@@ -157,11 +157,6 @@ const barCharts = computed(() => {
     })
 })
 
-function typeLabel(t: string): string {
-  const m = PROVIDER_META[t as keyof typeof PROVIDER_META]
-  return m?.label ?? t
-}
-
 /**
  * 逐日单元格的悬浮说明：把「这格为什么是红的 / 为什么写『充值』」讲到具体数字。
  * 表格只用红色一种强调色，所以原因全靠悬浮提示说清楚。
@@ -201,7 +196,7 @@ function exportCsv() {
   for (const a of r.accounts) {
     rows.push([
       a.name,
-      typeLabel(a.type),
+      providerLabel(a.type),
       a.unit,
       a.remaining ?? '',
       a.today ?? '',
@@ -305,7 +300,7 @@ function exportCsv() {
               </div>
             </div>
             <div class="bar-labels" :style="{ gridTemplateColumns: 'repeat(' + bc.bars.length + ', 1fr)' }">
-              <span v-for="(d, i) in report.days" :key="d.ts">{{ d.label }}</span>
+              <span v-for="d in report.days" :key="d.ts">{{ d.label }}</span>
             </div>
           </div>
         </div>
@@ -316,7 +311,7 @@ function exportCsv() {
               <tr>
                 <th class="tl">账号</th>
                 <th>剩余</th>
-                <th v-for="(d, i) in report.days" :key="d.ts" :title="DAY_COL_TIP">{{ d.label }}</th>
+                <th v-for="d in report.days" :key="d.ts" :title="DAY_COL_TIP">{{ d.label }}</th>
                 <th>今日</th>
                 <th title="近 7 天有效日的日均消耗（不含停机期间）">7日均</th>
                 <th title="软件未运行期间的余额下降；已计入下方「合计」，但不计入日均与耗尽预估">停机期间</th>
@@ -329,7 +324,7 @@ function exportCsv() {
               <tr v-for="a in report.accounts" :key="a.accountId">
                 <td class="tl">
                   <span class="acc-name">{{ a.name }}</span>
-                  <span class="muted">{{ typeLabel(a.type) }}</span>
+                  <span class="muted">{{ providerLabel(a.type) }}</span>
                   <button class="link-btn" type="button" title="这一天的数据不对？去「数据校正」页修改" @click="emit('correct', a.accountId)">校正</button>
                 </td>
                 <td class="num">{{ fmtNumber(a.remaining) }} <span class="muted">{{ a.unit }}</span></td>
@@ -397,7 +392,7 @@ function exportCsv() {
           </thead>
           <tbody>
             <tr v-for="r in selectedDay.rows" :key="r.name">
-              <td class="tl">{{ r.name }} <span class="muted">{{ typeLabel(r.type) }}</span></td>
+              <td class="tl">{{ r.name }} <span class="muted">{{ providerLabel(r.type) }}</span></td>
               <td class="muted">{{ r.unit || '—' }}</td>
               <td class="num">{{ r.value === null ? '—' : fmtNumber(r.value) }}</td>
               <td class="num gap" :class="{ dim: !r.gap }">{{ r.gap ? fmtNumber(r.gap) : '—' }}</td>
@@ -428,9 +423,7 @@ function exportCsv() {
 .head { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; padding: 20px var(--pad-lg) 8px; }
 .head h2 { font-size: 19px; font-weight: 700; color: var(--tx-strong); margin: 0; }
 .tools { display: flex; align-items: center; gap: 8px; }
-.seg { display: inline-flex; gap: 4px; background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 3px; }
-.seg button { border: none; background: transparent; color: var(--tx2); font-size: var(--fs-sub); font-weight: 500; padding: 5px 12px; border-radius: 8px; cursor: pointer; transition: background var(--dur) ease, color var(--dur) ease; }
-.seg button.on { background: var(--card); color: var(--acc); font-weight: 600; box-shadow: var(--shadow-sm); }
+/* .seg / .gap-note 基础样式统一在 global.css */
 .scroll { flex: 1; overflow-y: auto; padding: 8px var(--pad-lg) 40px; }
 .chips { display: flex; flex-wrap: wrap; gap: var(--gap); margin: 10px 0 18px; }
 .chip { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px 18px; min-width: 150px; box-shadow: var(--shadow-sm); display: flex; flex-direction: column; gap: 4px; }
@@ -473,13 +466,6 @@ function exportCsv() {
 .usage-table td.fcast { font-weight: 600; }
 /* 「预计耗尽」「停机期间」列：一律普通字色，不标红、不加粗（用户要求：不需要突出显示） */
 .usage-table td.gap, .dd-table td.gap { font-variant-numeric: tabular-nums; }
-/* 停机期间说明：普通一行提示文字，不做底色/边框/变色强调 */
-.gap-note {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
-  margin: 0 0 12px; font-size: var(--fs-foot); color: var(--tx3);
-}
-.gap-ico { font-size: 13px; }
-.gap-val { font-variant-numeric: tabular-nums; color: var(--tx2); }
 .usage-table tfoot td { border-bottom: none; background: var(--acc-soft); }
 .acc-name { display: block; font-weight: 600; color: var(--tx); }
 .muted { color: var(--tx3); font-size: var(--fs-foot); }

@@ -247,8 +247,6 @@ export const SENSENOVA_TOKEN_KEY = 'access_token'
 export interface LoginPlatformRule {
   /** 登录窗口所在分区的主机名（= 续期脚本用的分区；必须是真正持有会话 Cookie 的那个域） */
   partitionHost: string
-  /** 登录成功判定的页面规则（进入这些 host + 路径即视为"登录后"） */
-  success?: { hosts: string[]; pathPrefix?: string }
   /** 额外按这些 URL 抓 Cookie（会话 Cookie 可能分布在多个域） */
   extra: string[]
   /** 登录态存放在 localStorage 的键名（商汤这类只认 Bearer token 的平台） */
@@ -275,7 +273,6 @@ export const LOGIN_RULES: Record<string, LoginPlatformRule> = {
   },
   minimax: {
     partitionHost: 'platform.minimaxi.com',
-    success: { hosts: ['platform.minimaxi.com', 'platform.minimax.cn'], pathPrefix: '/console/' },
     extra: [
       'https://www.minimaxi.com',
       'https://www.minimax.cn',
@@ -285,7 +282,6 @@ export const LOGIN_RULES: Record<string, LoginPlatformRule> = {
   },
   zhipu: {
     partitionHost: 'bigmodel.cn',
-    success: { hosts: ['bigmodel.cn'], pathPrefix: '/console/' },
     extra: []
   },
   sensenova: {

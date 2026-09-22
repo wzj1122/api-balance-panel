@@ -1,11 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import { ACCOUNT_TYPES, DEFAULT_QUOTA_PER_USD, DEFAULT_SETTINGS, PROVIDER_META } from '../shared/constants'
-import { maskSecret } from '../shared/format'
+import { isPlainObject, maskSecret, normalizeTags, numOrNull } from '../shared/format'
 import type { Account, AccountInput, AccountType, CredentialSession, Settings, AccountView } from '../shared/types'
-import { CRYPTO_VERSION, currentScheme, decrypt, encrypt } from './crypto'
+import { CRYPTO_VERSION, currentScheme, decrypt, decryptWithFallback, encrypt } from './crypto'
 import type { CryptoScheme } from './crypto'
 import { logger } from './logger'
+import { setDefaultTimeoutMs } from './http'
 import { demoAccounts, isDemo } from './demo'
 import { CONFIG_BAK, CONFIG_FILE, CONFIG_TMP, corruptFileName, ensureDirs } from './paths'
 
@@ -20,7 +21,7 @@ import { CONFIG_BAK, CONFIG_FILE, CONFIG_TMP, corruptFileName, ensureDirs } from
  */
 
 /** 磁盘上的完整配置结构 */
-export interface AppConfig {
+interface AppConfig {
   version: number
   crypto: { scheme: CryptoScheme; version: number }
   settings: Settings
@@ -30,19 +31,23 @@ export interface AppConfig {
 }
 
 /** 单账号的提醒状态（按自然日计数） */
-export interface NoticeState {
+interface NoticeState {
   date: string
   count: number
 }
 
 const CONFIG_VERSION = 1
 
+/** .bak 备份节流：高频保存（每账号每次刷新都写）不再每次整文件复制，最多 10 分钟备一次 */
+let lastBakAt = 0
+const BAK_MIN_INTERVAL_MS = 10 * 60 * 1000
+
 /**
  * 一份全新的默认配置。
  * scheme 这里写死 'safeStorage-v1'：模块初始化时 app 可能还没 ready，
  * 此时探测 safeStorage 会得到错误的 false；真正加密时（saveAccount）会按 currentScheme() 刷新。
  */
-export function defaultConfig(): AppConfig {
+function defaultConfig(): AppConfig {
   return {
     version: CONFIG_VERSION,
     crypto: { scheme: 'safeStorage-v1', version: CRYPTO_VERSION },
@@ -54,19 +59,9 @@ export function defaultConfig(): AppConfig {
 
 // ---------- 归一化（逐字段兜底，保证界面拿到的永远是合法对象，不白屏） ----------
 
-function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v)
-}
-
 function numOr(v: unknown, fallback: number): number {
   const n = typeof v === 'number' ? v : Number(v)
   return Number.isFinite(n) ? n : fallback
-}
-
-function numOrNull(v: unknown): number | null {
-  if (v === null || v === undefined) return null
-  const n = typeof v === 'number' ? v : Number(v)
-  return Number.isFinite(n) ? n : null
 }
 
 function boolOr(v: unknown, fallback: boolean): boolean {
@@ -77,24 +72,12 @@ function strOr(v: unknown, fallback = ''): string {
   return typeof v === 'string' ? v : fallback
 }
 
-/** 标签归一化：字符串数组，去重、去空、单个 ≤ 16 字、最多 8 个 */
-function normalizeTags(raw: unknown): string[] {
-  if (!Array.isArray(raw)) return []
-  const out: string[] = []
-  for (const v of raw) {
-    const s = String(v ?? '').trim().slice(0, 16)
-    if (s && !out.includes(s)) out.push(s)
-    if (out.length >= 8) break
-  }
-  return out
-}
-
 function clamp(n: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, n))
 }
 
 /** 设置项归一化：缺字段补默认，越界拉回范围 */
-export function normalizeSettings(raw: unknown): Settings {
+function normalizeSettings(raw: unknown): Settings {
   const src = isPlainObject(raw) ? raw : {}
   const d = DEFAULT_SETTINGS
   const refresh = numOr(src.refresh_seconds, d.refresh_seconds)
@@ -140,7 +123,7 @@ function normalizeBudget(raw: unknown, fallback: Record<string, number>): Record
 }
 
 /** 单条账号归一化；类型非法或没名字就返回 null（调用方丢弃并记录 warn） */
-export function normalizeAccount(raw: unknown): Account | null {
+function normalizeAccount(raw: unknown): Account | null {
   if (!isPlainObject(raw)) return null
   const type = strOr(raw.type) as AccountType
   if (!ACCOUNT_TYPES.includes(type)) return null
@@ -162,7 +145,6 @@ export function normalizeAccount(raw: unknown): Account | null {
   }
 
   if (Array.isArray(raw.tags)) account.tags = normalizeTags(raw.tags)
-  if (typeof raw.group === 'string' && raw.group) account.group = raw.group
   if (typeof raw.base_url === 'string') account.base_url = raw.base_url
   if (typeof raw.user_id === 'string') account.user_id = raw.user_id
   if (raw.quota_per_usd !== undefined && raw.quota_per_usd !== null) {
@@ -175,7 +157,6 @@ export function normalizeAccount(raw: unknown): Account | null {
   // 结构来自用户手改的 config.json，只在类型层面做一次断言，真正的校验留给适配器
   if (isPlainObject(raw.request)) account.request = raw.request as unknown as Account['request']
   if (isPlainObject(raw.extract)) account.extract = raw.extract as unknown as Account['extract']
-  account.scale = numOr(raw.scale, 1)
   account.threshold = numOrNull(raw.threshold)
   account.notice_enabled = boolOr(raw.notice_enabled, true)
   account.last_status = raw.last_status === 'ok' || raw.last_status === 'error' ? raw.last_status : null
@@ -186,7 +167,7 @@ export function normalizeAccount(raw: unknown): Account | null {
 }
 
 /** 整个配置归一化 */
-export function normalizeConfig(raw: unknown): AppConfig {
+function normalizeConfig(raw: unknown): AppConfig {
   const src = isPlainObject(raw) ? raw : {}
   const accounts: Account[] = []
   const rawAccounts = Array.isArray(src.accounts) ? src.accounts : []
@@ -304,8 +285,10 @@ export class Store {
   save(): void {
     ensureDirs()
     try {
-      if (fs.existsSync(CONFIG_FILE)) {
+      // .bak 备份节流（主文件靠原子写 tmp+fsync+rename 保证不写坏，.bak 只是二重保险）
+      if (fs.existsSync(CONFIG_FILE) && Date.now() - lastBakAt >= BAK_MIN_INTERVAL_MS) {
         fs.copyFileSync(CONFIG_FILE, CONFIG_BAK)
+        lastBakAt = Date.now()
       }
       const text = JSON.stringify(this.config, null, 2)
       const fd = fs.openSync(CONFIG_TMP, 'w')
@@ -376,6 +359,8 @@ export class Store {
       session_enc: existing?.session_enc ?? null,
       token_expires_at: existing?.token_expires_at ?? null,
       created_at: existing ? existing.created_at : now,
+      // 回收站状态同样必须保留：否则回收站里的账号一被编辑保存就"复活"成普通账号
+      deleted_at: existing?.deleted_at ?? null,
       updated_at: now
     }
 
@@ -407,7 +392,6 @@ export class Store {
     account.last_status = existing?.last_status ?? null
     account.last_error = existing?.last_error ?? null
     account.last_ts = existing?.last_ts ?? null
-    if (existing?.group) account.group = existing.group
 
     if (existing) {
       const index = this.config.accounts.findIndex((a) => a.id === existing.id)
@@ -445,16 +429,10 @@ export class Store {
     this.save()
   }
 
-  /** 解密取出明文密钥（只存在于主进程内存，绝不跨 IPC 传输） */
+  /** 解密取出明文密钥（只存在于主进程内存，绝不跨 IPC 传输）；双方案回退统一走 crypto.decryptWithFallback */
   getSecret(account: Account): string {
     const scheme = this.config.crypto?.scheme ?? currentScheme()
-    let plain = decrypt(account.secret_enc, scheme)
-    // 环境变化导致方案对不上时，再试另一种方案（旧配置不用迁移也能读）
-    if (!plain && account.secret_enc) {
-      const other: CryptoScheme = scheme === 'safeStorage-v1' ? 'obfuscate-v1' : 'safeStorage-v1'
-      plain = decrypt(account.secret_enc, other)
-    }
-    return plain
+    return decryptWithFallback(account.secret_enc, scheme)
   }
 
   // ---------- 会话凭据（登录型平台的续期材料） ----------
@@ -505,6 +483,8 @@ export class Store {
 
   getSettings(): Settings {
     this.ensureLoaded()
+    // 让「设置里的 timeout_ms」对所有 HTTP 请求真正生效（http.ts 的默认超时从这里同步）
+    setDefaultTimeoutMs(this.config.settings.timeout_ms)
     return this.config.settings
   }
 
@@ -512,6 +492,7 @@ export class Store {
   saveSettings(patch: Partial<Settings>): Settings {
     this.ensureLoaded()
     this.config.settings = normalizeSettings({ ...this.config.settings, ...patch })
+    setDefaultTimeoutMs(this.config.settings.timeout_ms)
     this.save()
     logger.info('[store] 设置已更新')
     return this.config.settings
@@ -611,7 +592,7 @@ export class Store {
 }
 
 /** 自然日 key（本地时区） */
-export function todayKey(ts: number = Date.now()): string {
+function todayKey(ts: number = Date.now()): string {
   const d = new Date(ts)
   const p = (v: number): string => String(v).padStart(2, '0')
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`

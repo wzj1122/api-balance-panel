@@ -399,6 +399,55 @@ select.input option {
   color: var(--tx);
 }
 
+/* ---------- 分段控件 .seg（MonitorPanel / PlatformUsage / SettingsDialog / UsageReportView / UsageStats 共用基础样式；差异留在各组件 scoped 样式里） ---------- */
+.seg {
+  display: inline-flex;
+  gap: 4px;
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 3px;
+}
+
+.seg button {
+  border: none;
+  background: transparent;
+  color: var(--tx2);
+  font-size: var(--fs-sub);
+  font-weight: 500;
+  padding: 5px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background var(--dur) ease, color var(--dur) ease;
+}
+
+.seg button.on {
+  background: var(--card);
+  color: var(--acc);
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
+}
+
+/* ---------- 停机期间说明条 .gap-note（UsageStats / PlatformUsage 共用）：普通提示文字，不做底色/边框/变色强调 ---------- */
+.gap-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+  font-size: var(--fs-foot);
+  color: var(--tx3);
+}
+
+.gap-ico {
+  font-size: 13px;
+}
+
+.gap-val {
+  color: var(--tx2);
+  font-variant-numeric: tabular-nums;
+}
+
 /* ---------- 滚动条（细窄圆条） ---------- */
 ::-webkit-scrollbar {
   width: 10px;
@@ -524,6 +573,20 @@ select.input option {
   opacity: 0;
 }
 
+/* 确认 / 输入对话框（ConfirmDialog，随 BaseModal 一起 Teleport，必须全局） */
+.confirm-msg {
+  margin: 0 0 6px;
+  font-size: var(--fs-sub);
+  color: var(--tx2);
+  line-height: 1.7;
+  white-space: pre-line;
+  word-break: break-word;
+}
+
+.confirm-input {
+  margin-top: 10px;
+}
+
 /* ---------- 加载骨架屏（统一各页加载态） ---------- */
 .sk-wrap { display: flex; flex-direction: column; gap: 12px; padding: 22px 4px; }
 .sk-row { height: 18px; width: 100%; }
@@ -581,7 +644,6 @@ select.input option {
 [data-card-translucent='on'] .hint-box,
 [data-card-translucent='on'] .audit,
 [data-card-translucent='on'] .export-card,
-[data-card-translucent='on'] .plat-card,
 [data-card-translucent='on'] .bars-card,
 [data-card-translucent='on'] .cal-card,
 [data-card-translucent='on'] .budget {
@@ -594,10 +656,10 @@ select.input option {
 
 /* ---------- flex 布局下的页面滚动兜底（否则内容长时无法滚动） ---------- */
 .logs-pane, .settings-pane, .help-pane, .usage-pane, .keys-pane,
-.report-pane, .theme-pane, .avail-pane, .monitor {
+.report-pane, .theme-pane, .monitor {
   min-height: 0;
 }
-.logs-pane > .scroll, .settings-pane > .pane-scroll, .help-pane > .pane-scroll,
+.logs-pane > .scroll, .settings-pane > .pane-scroll, .help-pane > .help-scroll,
 .usage-pane > .scroll, .keys-pane > .scroll, .report-pane > .scroll, .theme-pane > .scroll {
   min-height: 0;
 }
@@ -611,7 +673,6 @@ html[data-glass='on'] .chip,
 html[data-glass='on'] .chart-card,
 html[data-glass='on'] .cal-card,
 html[data-glass='on'] .bars-card,
-html[data-glass='on'] .plat-card,
 html[data-glass='on'] .table-wrap,
 html[data-glass='on'] .mcard,
 html[data-glass='on'] .audit,
@@ -702,13 +763,13 @@ html[data-glass='on'] .theme-pane {
 /* ① 开关：保持原生渐变轨道（伪元素方案会影响圆点定位，这里不适用） */
 
 /* ② 圆角渐变方块的通用处理（logo / 标签 / 引导圆点 / 摘要徽章） */
-.logo, .tb-logo, .hero-logo, .demo-tag, .gdot.on, .chip-value.strong {
+.tb-logo, .hero-logo, .demo-tag, .gdot.on, .chip-value.strong {
   position: relative;
   isolation: isolate;
   overflow: hidden;
   background: transparent !important;
 }
-.logo::before, .tb-logo::before, .hero-logo::before,
+.tb-logo::before, .hero-logo::before,
 .demo-tag::before, .gdot.on::before, .chip-value.strong::before {
   content: '';
   position: absolute;
@@ -717,7 +778,7 @@ html[data-glass='on'] .theme-pane {
   background: var(--acc-grad);
   z-index: -1;
 }
-.logo > *, .tb-logo > *, .hero-logo > *,
+.tb-logo > *, .hero-logo > *,
 .demo-tag > *, .chip-value.strong > * {
   position: relative;
   z-index: 1;

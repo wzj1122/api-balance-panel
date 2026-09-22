@@ -21,8 +21,8 @@ import { okResult, round6 } from './util'
  * 在部分网络下 DNS 解析不了）；业务错误常带非 200 状态，必须先看响应体 Code。
  */
 
-export const ALIYUN_BSS_ENDPOINT = 'https://business.aliyuncs.com/'
-export const ALIYUN_BSS_VERSION = '2017-12-14'
+const ALIYUN_BSS_ENDPOINT = 'https://business.aliyuncs.com/'
+const ALIYUN_BSS_VERSION = '2017-12-14'
 
 /** RFC3986 编码（阿里云签名规范：! ' ( ) * 必须转义为大写 %XX） */
 function pctEncode(s: string): string {
@@ -64,7 +64,7 @@ export function buildBssUrl(
 }
 
 /** BSS 返回的错误码 → 本地错误码（文案由 errors.ts 统一给） */
-export function mapBssError(code: string): 'HTTP_401' | 'HTTP_403' | 'UNKNOWN' {
+function mapBssError(code: string): 'HTTP_401' | 'HTTP_403' | 'UNKNOWN' {
   if (/InvalidAccessKey|SignatureDoesNotMatch|InvalidSecurity|IncompleteSignature|MissingParameter|MissingSecurityToken/i.test(code)) {
     return 'HTTP_401'
   }
@@ -75,7 +75,7 @@ export function mapBssError(code: string): 'HTTP_401' | 'HTTP_403' | 'UNKNOWN' {
 }
 
 /** 把阿里云错误码翻译成看得懂的中文（卡片「详情」行展示） */
-export function bssErrorZh(code: string, message?: string): string {
+function bssErrorZh(code: string, message?: string): string {
   const raw = message && message.trim() ? '（' + message.trim() + '）' : ''
   if (/InvalidAccessKeyId.NotFound/i.test(code)) {
     return 'AccessKey 不存在：ID 填错，或刚创建还没生效，等 2~3 分钟再刷新' + raw

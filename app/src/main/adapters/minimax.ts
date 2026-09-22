@@ -3,7 +3,7 @@ import type { BalanceItem } from '../../shared/types'
 import { AdapterError, mapHttpStatus } from '../errors'
 import { request } from '../http'
 import type { Adapter } from './types'
-import { dig, num, okResult, safeJson } from './util'
+import { assertNotExpired, dig, num, okResult, safeJson } from './util'
 
 /**
  * MiniMax 开放平台余额（Cookie + X-Group-Id 头）。
@@ -51,7 +51,7 @@ export const minimaxAdapter: Adapter = async (account, ctx) => {
     'Accept-Language': 'zh-CN'
   }
   const r2 = await request(base + '/account/query_balance', { headers })
-  if (r2.status === 401 || r2.status === 403) throw new AdapterError('COOKIE_EXPIRED', String(r2.status))
+  assertNotExpired(r2, '请重新登录 MiniMax')
   if (r2.status !== 200) throw new AdapterError(mapHttpStatus(r2.status), r2.text.slice(0, 160))
   const j2 = safeJson(r2.text, base + '/account/query_balance')
   const resp2 = (dig(j2, 'base_resp.status_code') ?? 0) as number

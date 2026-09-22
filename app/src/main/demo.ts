@@ -81,8 +81,7 @@ export function demoSnapshots(): Snapshot[] {
           unit: def.unit,
           note: fail ? '示例：平台返回 503（演示数据）' : '',
           items: [],
-          latency_ms: Math.round(180 + noise(d * 17 + k * 3) * 900),
-          source: 'live'
+          latency_ms: Math.round(180 + noise(d * 17 + k * 3) * 900)
         })
       }
     }

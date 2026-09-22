@@ -3,7 +3,7 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { maskSecret } from '../shared/format'
 import type { Monitor, MonitorCheck, MonitorInput, MonitorReport, MonitorStat, MonitorView } from '../shared/types'
-import { CRYPTO_VERSION, currentScheme, decrypt, encrypt } from './crypto'
+import { CRYPTO_VERSION, currentScheme, decryptWithFallback, encrypt } from './crypto'
 import { logger } from './logger'
 import { DATA_DIR } from './paths'
 
@@ -38,7 +38,19 @@ function loadMonitors(): Monitor[] {
   try {
     const raw = JSON.parse(fs.readFileSync(MONITORS_FILE, 'utf8')) as MonitorsFile
     monitorsCache = Array.isArray(raw?.monitors) ? raw.monitors : []
-  } catch {
+  } catch (e) {
+    // 与 store 的 config.json 同一策略：坏文件先改名归档（不删，留给用户自己救）再重建，
+    // 避免下一次保存把现场覆盖掉
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+      let archived: string | null = null
+      try {
+        archived = path.join(DATA_DIR, `monitors.corrupt-${Date.now()}.json`)
+        fs.renameSync(MONITORS_FILE, archived)
+      } catch {
+        archived = null
+      }
+      logger.error(`[monitor] monitors.json 解析失败，已按空配置重建（坏文件另存为 ${archived ?? '未知'}）：${(e as Error).message}`)
+    }
     monitorsCache = []
   }
   return monitorsCache
@@ -63,7 +75,15 @@ function loadHistory(): MonitorCheck[] {
   try {
     const raw = JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8')) as { entries?: MonitorCheck[] }
     historyCache = Array.isArray(raw?.entries) ? raw.entries : []
-  } catch {
+  } catch (e) {
+    // 损坏文件归档再重建（与 monitors.json 同策略），不静默清零后覆盖
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+      try {
+        const target = HISTORY_FILE.replace(/\.json$/, `.corrupt-${Date.now()}.json`)
+        fs.renameSync(HISTORY_FILE, target)
+        logger.error('[monitor] monitor-history.json 不可用，已归档为 ' + path.basename(target) + ' 并重建')
+      } catch { /* 归档失败就直接重建 */ }
+    }
     historyCache = []
   }
   return historyCache
@@ -94,23 +114,14 @@ function appendCheck(check: MonitorCheck): void {
 }
 
 
-export function toMonitorView(m: Monitor): MonitorView {
+function toMonitorView(m: Monitor): MonitorView {
   const { secret_enc, ...rest } = m
   return { ...rest, has_secret: !!secret_enc }
 }
 
+/** 双方案解密回退统一走 crypto.decryptWithFallback（解不开返回空串，不抛） */
 function safeDecrypt(enc: string | null, scheme: string): string {
-  if (!enc) return ''
-  try {
-    return decrypt(enc, scheme as Parameters<typeof decrypt>[1])
-  } catch {
-    try {
-      return decrypt(enc)
-    } catch (e) {
-      logger.warn('[monitor] 解密密钥失败：' + (e as Error).message)
-      return ''
-    }
-  }
+  return decryptWithFallback(enc, scheme as Parameters<typeof decryptWithFallback>[1])
 }
 
 export function saveMonitor(input: MonitorInput): MonitorView {
@@ -174,7 +185,7 @@ function subst(template: string, key: string): string {
 }
 
 /** 执行一次真实调用 */
-export async function runCheck(monitor: Monitor): Promise<MonitorCheck> {
+async function runCheck(monitor: Monitor): Promise<MonitorCheck> {
   const key = safeDecrypt(monitor.secret_enc, monitor.secret_scheme)
   const headers: Record<string, string> = { Accept: 'application/json' }
   for (const [k, v] of Object.entries(monitor.headers || {})) {

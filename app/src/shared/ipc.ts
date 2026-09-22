@@ -161,7 +161,7 @@ export interface PanelApi {
     extraUrls?: string[]
     /** 编辑已有账号时传账号 id：登录成功后主进程直接把新凭据与续期材料写进该账号 */
     accountId?: string
-  }): Promise<{ ok: boolean; cookie?: string; error?: string; canRenew?: boolean }>
+  }): Promise<{ ok: boolean; cookie?: string; error?: string; canRenew?: boolean; renewHint?: string }>
 
   /** 静默续期登录：用保存的会话换新凭据（不弹窗、不需要密码）；失败说明会话已彻底失效 */
   renewAccount(id: string): Promise<{ ok: boolean; error: string; needLogin: boolean; expiresAt: number | null }>
@@ -278,8 +278,8 @@ export interface PanelApi {
   /** 临时切换日志级别（debug 可看到请求级细节） */
   setLogLevel(level: LogLevel): Promise<{ level: LogLevel }>
 
-  /** 已导入的背景图列表 */
-  listBackgrounds(): Promise<{ files: { name: string; size: number }[] }>
+  /** 已导入的背景图列表（builtin=内置随安装包发布，不可删除） */
+  listBackgrounds(): Promise<{ files: { name: string; size: number; builtin: boolean }[] }>
 
   /** 导入背景图（弹文件选择，复制到数据目录） */
   importBackground(): Promise<{ ok: boolean; name?: string; error?: string }>

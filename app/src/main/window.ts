@@ -1,5 +1,6 @@
 import path from 'node:path'
 import { BrowserWindow } from 'electron'
+import { IPC } from '../shared/ipc'
 import { logger } from './logger'
 
 /**
@@ -92,18 +93,16 @@ export function createWindow(): BrowserWindow {
   // 最大化状态变化推给渲染层，用于切换标题栏按钮图标
   const pushState = (): void => {
     if (win.isDestroyed()) return
-    win.webContents.send('window:state', { maximized: win.isMaximized() })
+    win.webContents.send(IPC.WINDOW_STATE, { maximized: win.isMaximized() })
   }
   win.on('maximize', pushState)
   win.on('unmaximize', pushState)
 
   // 开发模式由 electron-vite 注入 ELECTRON_RENDERER_URL；生产模式加载打包后的 html
   const devUrl = process.env['ELECTRON_RENDERER_URL']
-  if (devUrl) {
-    void win.loadURL(devUrl)
-  } else {
-    void win.loadFile(path.join(__dirname, '../renderer/index.html'))
-  }
+  const load = devUrl ? win.loadURL(devUrl) : win.loadFile(path.join(__dirname, '../renderer/index.html'))
+  // 加载失败要留痕（此前 void 掉 Promise，失败只落一行 unhandledRejection，很难排查）
+  void load.catch((e: unknown) => logger.error('[window] 页面加载异常：' + ((e as Error)?.message ?? String(e))))
 
   mainWindow = win
   return win

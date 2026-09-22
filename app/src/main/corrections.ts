@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import type { Correction, CorrectionInput, Snapshot } from '../shared/types'
+import { isPlainObject, numOrNull } from '../shared/format'
 import { logger } from './logger'
 import { DATA_DIR, ensureDirs } from './paths'
 
@@ -31,16 +32,6 @@ interface CorrectionFile {
 }
 
 let cache: Correction[] | null = null
-
-function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v)
-}
-
-function numOrNull(v: unknown): number | null {
-  if (v === null || v === undefined || v === '') return null
-  const n = typeof v === 'number' ? v : Number(v)
-  return Number.isFinite(n) ? n : null
-}
 
 /** 归一化一条校正（非法项丢弃） */
 function normalize(raw: unknown): Correction | null {
@@ -101,7 +92,7 @@ function save(): void {
  * 只看在这个时刻**仍然生效**的校正：fromTs <= ts，且（无 toTs 或 ts < toTs）。
  * @param list 可选：指定账本（默认读全局账本；测试用）
  */
-export function offsetFor(accountId: string, ts: number, list?: Correction[]): number {
+function offsetFor(accountId: string, ts: number, list?: Correction[]): number {
   let sum = 0
   for (const c of list ?? loadCorrections()) {
     if (c.accountId !== accountId) continue
@@ -115,11 +106,6 @@ export function offsetFor(accountId: string, ts: number, list?: Correction[]): n
 /** 该账号当前（最新时刻）的净平移量，用于卡片实时数字 */
 export function totalOffset(accountId: string, list?: Correction[]): number {
   return offsetFor(accountId, Date.now(), list)
-}
-
-/** 某账号是否被校正过 */
-export function hasCorrection(accountId: string): boolean {
-  return loadCorrections().some((c) => c.accountId === accountId)
 }
 
 /**
@@ -234,9 +220,4 @@ export function clearCorrections(accountId: string): number {
     logger.info(`[correction] 已清空账号 ${accountId} 的 ${n} 条校正`)
   }
   return n
-}
-
-/** 演示模式 / 测试用：丢弃内存缓存，强制重新读盘 */
-export function resetCorrectionCache(): void {
-  cache = null
 }

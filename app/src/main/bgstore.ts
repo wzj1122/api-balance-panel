@@ -105,6 +105,8 @@ export function removeBackground(name: string): boolean {
 export function backgroundData(name: string): { ok: boolean; dataUrl?: string; error?: string } {
   try {
     const safe = path.basename(name)
+    // 扩展名白名单：读取时不给"目录内任意文件转 base64"的机会
+    if (!ALLOWED.includes(path.extname(safe).toLowerCase())) return { ok: false, error: '不支持的图片格式' }
     const builtin = path.join(builtinDir(), safe)
     const target = fs.existsSync(builtin) ? builtin : path.join(BG_DIR, safe)
     if (!fs.existsSync(target)) return { ok: false, error: '背景图不存在' }

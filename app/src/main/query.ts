@@ -66,7 +66,19 @@ const RENEW_COOLDOWN_MS = 5 * 60 * 1000
  * 给某个账号做一次静默续期，成功则落盘并返回 true。
  * @param reason 'expired' 到期/失败后自动续期；'manual' 用户点卡片按钮；'startup' 启动时预热
  */
+const renewInflight = new Map<string, Promise<boolean>>()
+
 export async function renewForAccount(account: Account, reason: 'expired' | 'manual' | 'startup'): Promise<boolean> {
+  // 互斥：同一账号同时只允许一个续期在跑（保活 / 临期 / 401 / 手动会并发触发，
+  // 否则多个隐藏窗口同时改写同一分区的 Cookie，互踩导致续期失败甚至弄脏会话）
+  const inflight = renewInflight.get(account.id)
+  if (inflight) return inflight
+  const task = doRenewForAccount(account, reason).finally(() => renewInflight.delete(account.id))
+  renewInflight.set(account.id, task)
+  return task
+}
+
+async function doRenewForAccount(account: Account, reason: 'expired' | 'manual' | 'startup'): Promise<boolean> {
   // 商汤已停用一切续期尝试（会话为 3 小时绝对到期，续期无效；到期提醒仍走 keepAliveSessions）
   if (!autoRenewable(account.type)) return false
   // 手动点按钮时不受冷却限制（用户明确要求重试）
@@ -189,9 +201,6 @@ async function queryAccount(accountInput: Account, force: boolean): Promise<Bala
   return row
 }
 
-/** 简易并发池：最多 limit 个任务同时在跑，任何一个失败不影响其它 */
-// runPool 抽到了 ./runPool.ts（纯函数，便于独立验证），这里直接复用
-
 /** 刷新余额：ids 为空 = 全部启用账号；force=true 跳过缓存 */
 export async function refresh(payload?: RefreshPayload): Promise<PanelPayload> {
   const { ids, force } = payload ?? {}
@@ -200,8 +209,7 @@ export async function refresh(payload?: RefreshPayload): Promise<PanelPayload> {
     const rows = demoRows()
     const panel: PanelPayload = {
       rows,
-      ts: Date.now(),
-      refreshSeconds: store.getSettings().refresh_seconds
+      ts: Date.now()
     }
     push(IPC.BALANCE_UPDATED, panel)
     updateTray(rows)
@@ -234,9 +242,10 @@ export async function refresh(payload?: RefreshPayload): Promise<PanelPayload> {
   }
   logger.info(`[query] 刷新完成：${rows.length} 个账号，耗时 ${Date.now() - started}ms`)
 
-  const panel: PanelPayload = { rows, ts: Date.now(), refreshSeconds: settings.refresh_seconds }
+  const panel: PanelPayload = { rows, ts: Date.now() }
 
-  snapshot.append(rows)
+  // 缓存命中行不重复写快照（同一 ts 的重复快照只会让文件虚增）
+  snapshot.append(rows.filter((r) => !r.cached))
   void maybeNotify(rows, settings)
   updateTray(rows)
 

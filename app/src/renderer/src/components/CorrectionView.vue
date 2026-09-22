@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import type { AccountView, CorrectionView } from '@shared/types'
-import { PROVIDER_META } from '@shared/constants'
 import { fmtNumber } from '@shared/format'
 import { correctionApply, correctionClear, correctionRemove, correctionView } from '@renderer/api/ipc'
+import { providerLabel } from '@renderer/utils/text'
+import { useFlash } from '@renderer/composables/useFlash'
+import { useConfirm } from '@renderer/composables/useConfirm'
 import InfoTip from './InfoTip.vue'
 import SelectMenu from './SelectMenu.vue'
 
@@ -28,8 +30,10 @@ const props = defineProps<{
 const selectedId = ref('')
 const viewData = ref<CorrectionView | null>(null)
 const loading = ref(false)
-const msg = ref('')
-const err = ref('')
+
+/** 提示（成功 flash 自动 5 秒消失；失败 fail 常驻到下一次提示） */
+const { msg, err, flash, fail } = useFlash(5000)
+const { confirm } = useConfirm()
 
 /** 每日编辑表：日期 + 当前值 + 输入的新值 */
 interface DayRow {
@@ -53,20 +57,6 @@ const rollbackInput = ref('')
 const rollbackBusy = ref(false)
 
 const accounts = computed(() => props.accounts.filter((a) => !a.deleted_at))
-
-function typeLabel(t: string): string {
-  return PROVIDER_META[t as keyof typeof PROVIDER_META]?.label ?? t
-}
-
-function flash(t: string): void {
-  msg.value = t
-  err.value = ''
-  setTimeout(() => { if (msg.value === t) msg.value = '' }, 5000)
-}
-function fail(t: string): void {
-  err.value = t
-  msg.value = ''
-}
 
 /** 取某账号的校正视图并把快照整理成"按天"编辑表 */
 async function load(accountId?: string): Promise<void> {
@@ -175,7 +165,7 @@ async function saveDayOnly(row: DayRow): Promise<void> {
 
 /** ①c 忽略这天：把该天异常读数从统计里剔除（比"改成某个数字"更彻底） */
 async function ignoreDay(row: DayRow): Promise<void> {
-  if (!window.confirm('忽略 ' + row.label + ' 的数据？该天将不计入消耗统计（可在下方账本里撤销）。')) return
+  if (!(await confirm('忽略 ' + row.label + ' 的数据？该天将不计入消耗统计（可在下方账本里撤销）。', { title: '忽略这天' }))) return
   ignoringDay.value = row.ts
   try {
     const r = await correctionApply({ accountId: selectedId.value, mode: 'dayIgnore', dayTs: row.ts, value: 0 })
@@ -189,7 +179,7 @@ async function ignoreDay(row: DayRow): Promise<void> {
 
 /** 撤销单条校正 */
 async function undo(id: string): Promise<void> {
-  if (!window.confirm('撤销这条校正？该账号这一段的历史会立即还原成平台原始数据。')) return
+  if (!(await confirm('撤销这条校正？该账号这一段的历史会立即还原成平台原始数据。', { title: '撤销校正' }))) return
   const r = await correctionRemove(id)
   if (!r.ok) { fail(r.error); return }
   flash('已撤销')
@@ -198,7 +188,7 @@ async function undo(id: string): Promise<void> {
 
 /** 一键还原该账号全部校正 */
 async function undoAll(): Promise<void> {
-  if (!window.confirm('还原该账号的全部校正？历史会立即变回平台原始数据（原始快照一直没被改动）。')) return
+  if (!(await confirm('还原该账号的全部校正？历史会立即变回平台原始数据（原始快照一直没被改动）。', { title: '全部还原' }))) return
   const r = await correctionClear(selectedId.value)
   if (!r.ok) { fail(r.error); return }
   flash(`已还原 ${r.data.removed} 条校正`)
@@ -227,11 +217,12 @@ async function applyRollback(): Promise<void> {
   if (!Number.isFinite(target)) { fail('余额数值不合法'); return }
   const delta = Math.round((target - (preview.cur ?? 0)) * 1e6) / 1e6
   if (delta === 0) { fail('当前余额与该目标一致，无需回退'); return }
-  if (!window.confirm(
+  if (!(await confirm(
     `确认回退？\n\n账号：${v.name}\n回退到：${new Date(rollbackTs.value).toLocaleString('zh-CN')}\n` +
     `该时刻余额：${preview.point.remaining}\n当前余额：${preview.cur}\n` +
-    `⇒ 该时刻起整体平移 ${delta}（后续每天的消耗算法不变，仍然准确）`
-  )) return
+    `⇒ 该时刻起整体平移 ${delta}（后续每天的消耗算法不变，仍然准确）`,
+    { title: '确认回退' }
+  ))) return
   rollbackBusy.value = true
   try {
     const r = await correctionApply({
@@ -257,8 +248,12 @@ const pointOptions = computed(() =>
     .slice(0, 200)
     .map((p) => ({
       value: p.ts,
-      label: new Date(p.ts).toLocaleString('zh-CN') + ' · ' + (p.remaining === null ? '无数据' : fmtNumber(p.remaining)),
-      suffix: p.adjusted ? '（已校正）' : ''
+      // 「（已校正）」直接拼进 label：SelectMenu 只渲染 label，独立的 suffix 字段没有消费者
+      label:
+        new Date(p.ts).toLocaleString('zh-CN') +
+        ' · ' +
+        (p.remaining === null ? '无数据' : fmtNumber(p.remaining)) +
+        (p.adjusted ? '（已校正）' : '')
     }))
 )
 </script>
@@ -274,7 +269,7 @@ const pointOptions = computed(() =>
         <SelectMenu
           v-if="accounts.length"
           :model-value="selectedId"
-          :options="accounts.map((a) => ({ value: a.id, label: a.name + '（' + typeLabel(a.type) + '）' }))"
+          :options="accounts.map((a) => ({ value: a.id, label: a.name + '（' + providerLabel(a.type) + '）' }))"
           @update:model-value="(v) => (selectedId = String(v))"
         />
         <button class="btn ghost" type="button" :disabled="loading" @click="load()">刷新</button>
@@ -289,7 +284,7 @@ const pointOptions = computed(() =>
 
       <template v-else-if="viewData">
         <div class="summary">
-          <span class="cur-acc">{{ viewData.name }} · {{ typeLabel(viewData.type) }}</span>
+          <span class="cur-acc">{{ viewData.name }} · {{ providerLabel(viewData.type) }}</span>
           <span v-if="viewData.offset !== 0" class="badge on">当前已校正 {{ viewData.offset > 0 ? '+' : '' }}{{ viewData.offset }} {{ viewData.unit }}</span>
           <span v-else class="badge">当前未校正</span>
           <span class="muted">共 {{ viewData.corrections.length }} 条校正记录</span>
@@ -356,7 +351,7 @@ const pointOptions = computed(() =>
         <div v-if="rollbackPreview" class="preview">
           <div>该时刻余额：<b class="num">{{ rollbackPreview.point.remaining === null ? '—' : fmtNumber(rollbackPreview.point.remaining) }}</b> {{ viewData.unit }}</div>
           <div>当前余额：<b class="num">{{ rollbackPreview.cur === null ? '—' : fmtNumber(rollbackPreview.cur) }}</b> {{ viewData.unit }}</div>
-          <div>将整体平移：<b class="num" :class="{ warn: true }">{{ rollbackPreview.delta > 0 ? '+' : '' }}{{ fmtNumber(rollbackPreview.delta) }}</b> {{ viewData.unit }}</div>
+          <div>将整体平移：<b class="num" :class="{ warn: rollbackPreview.delta !== 0 }">{{ rollbackPreview.delta > 0 ? '+' : '' }}{{ fmtNumber(rollbackPreview.delta) }}</b> {{ viewData.unit }}</div>
           <div class="field-inline">
             <span class="f-label">或直接填准确余额</span>
             <input v-model="rollbackInput" class="input mini" type="number" step="0.01" placeholder="留空 = 用上面的历史余额" />
@@ -429,7 +424,7 @@ const pointOptions = computed(() =>
 .ops-cell { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; }
 .btn.tiny.primary { background: var(--acc); color: var(--on-acc); border-color: transparent; }
 .btn.tiny.primary:disabled { opacity: 0.5; }
-.note-line { margin: 14px 0 var(--gap); font-size: var(--foot, 12px); color: var(--tx3); line-height: 1.8; }
+.note-line { margin: 14px 0 var(--gap); font-size: var(--fs-foot, 12px); color: var(--tx3); line-height: 1.8; }
 .note-line code { background: var(--panel2); border-radius: 4px; padding: 1px 5px; }
 .muted { color: var(--tx3); }
 .btn.tiny { padding: 3px 10px; font-size: 11.5px; }

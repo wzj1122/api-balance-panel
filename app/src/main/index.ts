@@ -1,5 +1,5 @@
 import { app } from 'electron'
-import { applyAutoStart, refreshAutoStart } from './autostart'
+import { refreshAutoStart } from './autostart'
 import { isSecure } from './crypto'
 import { registerIpc } from './ipc'
 import { logger } from './logger'
@@ -7,7 +7,8 @@ import { DATA_DIR, ensureDirs } from './paths'
 import { scheduler } from './scheduler'
 import { store } from './store'
 import { runDueMonitors } from './monitor'
-import { refresh, keepAliveSessions, startKeepAlive, stopKeepAlive } from './query'
+import { flush as flushSnapshots } from './snapshot'
+import { keepAliveSessions, startKeepAlive, stopKeepAlive } from './query'
 import { createTray, destroyTray, updateTray } from './tray'
 import { createWindow, isAutoStartLaunch, setQuitting, showMainWindow } from './window'
 
@@ -122,6 +123,7 @@ void app.whenReady().then(() => {
     // 关窗只隐藏到托盘，退出走托盘菜单；这里保留空 listener 防止平台默认退出
   })
 
+  let flushedOnQuit = false
   app.on('before-quit', () => {
     setQuitting(true)
     scheduler.stop()
@@ -129,5 +131,14 @@ void app.whenReady().then(() => {
     if (monitorTimer) clearInterval(monitorTimer)
     destroyTray()
     logger.info('[app] 退出')
+  })
+
+  // 退出前把还在内存里的快照写完：append 是异步节流落盘，直接退会丢最后几秒的数据
+  app.on('will-quit', (e) => {
+    if (!flushedOnQuit) {
+      e.preventDefault()
+      flushedOnQuit = true
+      void flushSnapshots().finally(() => app.quit())
+    }
   })
 }

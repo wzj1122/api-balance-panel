@@ -39,8 +39,6 @@ export const SNAPSHOT_FILE: string = path.join(DATA_DIR, 'snapshots.json')
 export const LOG_DIR: string = path.join(DATA_DIR, 'logs')
 /** 日志文件 */
 export const LOG_FILE: string = path.join(LOG_DIR, 'main.log')
-/** 轮转后的旧日志（只留 1 份） */
-export const LOG_OLD_FILE: string = path.join(LOG_DIR, 'main.old.log')
 
 /**
  * 确保数据目录与日志目录存在。

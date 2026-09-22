@@ -3,8 +3,11 @@ import { computed, onMounted, ref } from 'vue'
 import type { MonitorCheck, MonitorInput, MonitorStat, MonitorView } from '@shared/types'
 import { fmtAgo, fmtClock } from '@shared/format'
 import { listMonitorChecks, listMonitors, listKeys, removeMonitor, revealKey, runMonitors, saveMonitor, testMonitor } from '@renderer/api/ipc'
+import { useConfirm } from '@renderer/composables/useConfirm'
 import BaseModal from './BaseModal.vue'
 import InfoTip from './InfoTip.vue'
+
+const { confirm } = useConfirm()
 
 interface Row { monitor: MonitorView; stat: MonitorStat }
 
@@ -233,10 +236,11 @@ async function toggleEnabled(m: MonitorView) {
 }
 
 async function doRemove(m: MonitorView) {
-  const sure = window.confirm('删除监控目标「' + m.name + '」？历史记录会一并删除。')
+  const sure = await confirm('删除监控目标「' + m.name + '」？历史记录会一并删除。', { title: '删除监控目标', danger: true })
   if (!sure) return
   const r = await removeMonitor(m.id)
   if (r.ok) await load()
+  else runMsg.value = '删除失败：' + r.error
 }
 
 async function openHistory(id: string) {
@@ -520,9 +524,9 @@ const okCount = computed(() => rows.value.filter((r) => r.stat.lastOk === true).
 .input { width: 100%; }
 .input.area { font-family: ui-monospace, Consolas, monospace; font-size: 12px; line-height: 1.6; resize: vertical; }
 .input.mini { width: 110px; }
-.seg { display: inline-flex; gap: 4px; background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 3px; align-self: flex-start; }
-.seg button { border: none; background: transparent; color: var(--tx2); font-size: 12px; font-weight: 500; padding: 5px 14px; border-radius: 8px; cursor: pointer; }
-.seg button.on { background: var(--card); color: var(--acc); font-weight: 600; box-shadow: var(--shadow-sm); }
+/* .seg 基础样式在 global.css；这里只留差异（表单内左对齐、小号按钮、无过渡） */
+.seg { align-self: flex-start; }
+.seg button { font-size: 12px; padding: 5px 14px; transition: none; }
 .fhelp { font-size: 11.5px; color: var(--tx3); line-height: 1.7; margin: 0; }
 .fhelp code { background: var(--panel2); border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; font-size: 11px; }
 .ftest { font-size: 12.5px; color: var(--err); background: var(--err-soft); border-radius: 8px; padding: 8px 11px; margin: 0; word-break: break-all; }

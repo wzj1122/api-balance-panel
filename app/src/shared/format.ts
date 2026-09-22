@@ -52,6 +52,32 @@ export function maskSecret(s: string | null | undefined): string {
   return s.slice(0, 3) + '****' + s.slice(-4)
 }
 
+// ---------- 数据归一化小工具（store / keyvault / corrections 共用，避免各写一份） ----------
+
+/** 纯对象判定（不认数组 / null） */
+export function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v)
+}
+
+/** 数值归一化：null / undefined / 空串 / 非有限数 → null */
+export function numOrNull(v: unknown): number | null {
+  if (v === null || v === undefined || v === '') return null
+  const n = typeof v === 'number' ? v : Number(v)
+  return Number.isFinite(n) ? n : null
+}
+
+/** 标签归一化：字符串数组，去重、去空、单个 ≤ 16 字、最多 8 个 */
+export function normalizeTags(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  const out: string[] = []
+  for (const v of raw) {
+    const s = String(v ?? '').trim().slice(0, 16)
+    if (s && !out.includes(s)) out.push(s)
+    if (out.length >= 8) break
+  }
+  return out
+}
+
 /** 已用百分比：used / total 钳到 [0,100]；算不出返回 null（界面不画进度条） */
 
 /** 进度条颜色档位：≥90 红 / ≥70 黄 / 否则绿 */

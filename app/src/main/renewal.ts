@@ -21,15 +21,13 @@ import { logger } from './logger'
  */
 
 /** 一个平台的续期配方 */
-export interface RenewalRecipe {
+interface RenewalRecipe {
   /** 登录分区名（与 loginToSite 的 'persist:login-' + host 一致） */
   partition: string
   /** 要加载的页面（加载动作本身就会触发会话续期） */
   pageUrl: string
   /** 页面加载后要额外请求的接口（有些平台的续期由这个请求触发，如小米余额接口）；空 = 不需要 */
   apiUrl?: string
-  /** 附加请求头（如 Cookie）；缺省则用页面自身的登录态 */
-  apiHeaders?: (session: CredentialSession) => Record<string, string>
   /** localStorage 里的登录态键名（用来判断是否拿到了新 token） */
   tokenKey?: string
   /** 登录态校验：返回 null = 可用，否则返回原因 */
@@ -70,7 +68,7 @@ async function validateSenseNovaToken(token: string): Promise<string | null> {
 }
 
 /** 商汤续期配方：加载控制台 → 平台用会话换新 token 写进 localStorage */
-export const SENSENOVA_RENEWAL: RenewalRecipe = {
+const SENSENOVA_RENEWAL: RenewalRecipe = {
   // 分区名从登录规则推导（唯一口径）：登录窗口与续期必须是同一个分区，否则续期读不到会话
   partition: loginPartition(LOGIN_RULES.sensenova.partitionHost),
   pageUrl: 'https://platform.sensenova.cn/console',
@@ -79,7 +77,7 @@ export const SENSENOVA_RENEWAL: RenewalRecipe = {
 }
 
 /** 小米 MiMo 续期配方：加载控制台 + 主动请求一次余额接口（续期由这个请求触发） */
-export const MIMO_RENEWAL: RenewalRecipe = {
+const MIMO_RENEWAL: RenewalRecipe = {
   partition: loginPartition(LOGIN_RULES.mimo.partitionHost),
   pageUrl: 'https://platform.xiaomimimo.com/console/balance',
   apiUrl: MIMO_BALANCE_URL,
@@ -100,7 +98,7 @@ export const MIMO_RENEWAL: RenewalRecipe = {
 }
 
 /** 平台 → 续期配方（没有配方的平台不支持静默续期） */
-export function renewalRecipeFor(type: string): RenewalRecipe | null {
+function renewalRecipeFor(type: string): RenewalRecipe | null {
   if (type === 'sensenova') return SENSENOVA_RENEWAL
   if (type === 'mimo' || type === 'mimo-plan') return MIMO_RENEWAL
   return null
@@ -224,10 +222,9 @@ export async function renewCredential(
 
     // 有些平台靠接口请求触发续期（小米余额接口就是）
     if (recipe.apiUrl) {
-      const headers = recipe.apiHeaders ? recipe.apiHeaders(sessionMaterial ?? { ts: 0, cookies: '', tokenKey: '', tokenLen: 0, v: 1 }) : {}
       const cookie = cookieHeaderFrom(sessionMaterial)
       void fetch(recipe.apiUrl, {
-        headers: { Accept: 'application/json', ...(cookie ? { Cookie: cookie } : {}), ...headers },
+        headers: { Accept: 'application/json', ...(cookie ? { Cookie: cookie } : {}) },
         signal: AbortSignal.timeout(12000)
       }).catch(() => { /* 忽略：续期主要靠页面动作 */ })
     }
@@ -249,13 +246,13 @@ export async function renewCredential(
           ok: true,
           secret: token,
           expiresAt: jwtExpiry(token),
-          session: { ts: Date.now(), cookies, tokenKey: key, tokenLen: token.length, v: 1 }
+          session: { ts: Date.now(), cookies, tokenKey: key }
         }
       }
       // token 没刷新出来：可能是会话真的过期了
       const cookies = await collectAllCookies(ses, urls)
       logger.warn(`[renew] ${type} 静默续期失败（${opts.reason}）：没读到新的登录态（Cookie ${cookies.split('; ').filter(Boolean).length} 个）`)
-      return { ok: false, error: '会话已失效，需要重新登录一次', session: { ts: Date.now(), cookies, tokenKey: key, tokenLen: 0, v: 1 } }
+      return { ok: false, error: '会话已失效，需要重新登录一次', session: { ts: Date.now(), cookies, tokenKey: key } }
     }
 
     // 无 tokenKey 的平台（小米）：续期靠"用分区 Cookie 真实请求一次业务接口"，
@@ -297,11 +294,11 @@ export async function renewCredential(
       return {
         ok: false,
         error: '会话已失效，需要重新登录一次',
-        session: { ts: Date.now(), cookies, tokenKey: '', tokenLen: 0, v: 1 }
+        session: { ts: Date.now(), cookies, tokenKey: '' }
       }
     }
     logger.info(`[renew] ${type} 已刷新分区会话（${opts.reason}，Cookie ${cookies.split('; ').filter(Boolean).length} 个）并通过接口验证`)
-    return { ok: true, session: { ts: Date.now(), cookies, tokenKey: '', tokenLen: 0, v: 1 } }
+    return { ok: true, session: { ts: Date.now(), cookies, tokenKey: '' } }
   } catch (e) {
     logger.warn(`[renew] ${type} 续期异常：${(e as Error).message}`)
     return { ok: false, error: (e as Error).message }

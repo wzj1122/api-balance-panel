@@ -1,6 +1,6 @@
 {
   "name": "api-balance-panel",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "private": true,
   "description": "API 余额监控面板：一个窗口看完所有 AI 平台的余额",
   "productName": "API 余额面板",
@@ -12,6 +12,8 @@
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "typecheck": "vue-tsc --noEmit -p tsconfig.web.json --composite false && tsc --noEmit -p tsconfig.node.json --composite false",
+    "verify": "node scripts/verify.js",
+    "verify-adapters": "node scripts/verify-adapters.mjs",
     "pack": "electron-vite build && electron-builder --dir",
     "dist": "electron-vite build && electron-builder",
     "dist:win": "electron-vite build && electron-builder --win --x64"
@@ -25,6 +27,7 @@
     "electron": "44.2.0",
     "electron-builder": "^26.15.3",
     "electron-vite": "5.0.0",
+    "esbuild": "^0.28.2",
     "typescript": "5.9.3",
     "vite": "7.3.6",
     "vue-tsc": "3.3.11"

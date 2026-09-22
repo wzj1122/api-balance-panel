@@ -48,7 +48,7 @@ function prev() {
         <p class="guide-desc">{{ STEPS[step].desc }}</p>
 
         <div class="guide-dots">
-          <span v-for="(s, i) in STEPS" :key="i" class="gdot" :class="{ on: i === step }"></span>
+          <span v-for="(_s, i) in STEPS" :key="i" class="gdot" :class="{ on: i === step }"></span>
         </div>
 
         <div class="guide-actions">

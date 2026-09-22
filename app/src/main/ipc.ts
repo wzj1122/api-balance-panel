@@ -2,7 +2,7 @@ import { app, ipcMain, Notification, session, shell } from 'electron'
 import { LOGIN_RULES, MIMO_BALANCE_URL, MIMO_LOGIN_URL, MINIMAX_LOGIN_URL, SENSENOVA_CONSOLE_URL, SILICONFLOW_LOGIN_URL, ZHIPU_LOGIN_URL, loginPartition } from '../shared/constants'
 import { IPC } from '../shared/ipc'
 import type { RefreshPayload } from '../shared/ipc'
-import type { Account, AccountInput, AppInfo, Correction, CorrectionView, CredentialSession, MonitorInput, ReportPeriod, Settings, Snapshot, LogLevel, KeyVaultInput } from '../shared/types'
+import type { Account, AccountInput, AppInfo, CorrectionView, CredentialSession, MonitorInput, ReportPeriod, Settings, Snapshot, LogLevel, KeyVaultInput } from '../shared/types'
 import { applyAutoStart, getAutoStartStatus } from './autostart'
 import { getAdapter } from './adapters'
 import { backgroundData, backgroundForTheme, importBackground, listBackgrounds, removeBackground } from './bgstore'
@@ -18,7 +18,7 @@ import { clearLogs, exportLogs, getLogLevel, listLogFiles, logger, readLogs, set
 import { CONFIG_FILE, DATA_DIR, LOG_DIR } from './paths'
 import { invalidateCache, refresh, renewForAccount } from './query'
 import { autoRenewable, jwtExpiry, supportsRenewal } from './renewal'
-import { closeWindow, isWindowMaximized, minimizeWindow, toggleMaximizeWindow } from './window'
+import { closeWindow, getMainWindow, isWindowMaximized, minimizeWindow, toggleMaximizeWindow } from './window'
 import { scheduler } from './scheduler'
 import { buildDailyUsage, buildPlatformUsage, buildUsageReport, dailyConsumedDetailed, daySlices, gapLimitMs, isUsageBased } from './usage'
 import { listByAccount, readSnapshotsRaw, removeByAccount } from './snapshot'
@@ -33,12 +33,20 @@ import { store, toView } from './store'
 
 /** 把 handler 的异常统一转成可读的 Error（renderer 的 safeInvoke 会展示 message） */
 function wrap<T>(name: string, fn: (payload: unknown) => T | Promise<T>): void {
-  ipcMain.handle(name, async (_event, payload) => {
+  ipcMain.handle(name, async (event, payload) => {
+    // 发送方校验（纵深防御）：只接受主窗口发来的调用；登录窗 / 续期隐藏窗都没有 preload
+    const win = getMainWindow()
+    if (win && event.sender !== win.webContents) {
+      logger.warn(`[ipc] 拒绝非主窗口对 ${name} 的调用`)
+      throw new Error('非法调用来源')
+    }
     try {
       return await fn(payload)
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      logger.error(`[ipc] ${name} 处理失败：`, msg)
+      const raw = e instanceof Error ? e.message : String(e)
+      logger.error(`[ipc] ${name} 处理失败：`, raw)
+      // 回抛前脱敏：内部异常可能带本地绝对路径，界面提示里统一替换成占位符（完整细节在运行日志里）
+      const msg = raw.split(DATA_DIR).join('<数据目录>').split(LOG_DIR).join('<日志目录>')
       throw new Error(msg)
     }
   })
@@ -101,12 +109,11 @@ export function registerIpc(): void {
 
   // 删除账号
   wrap(IPC.ACCOUNT_REMOVE, async (payload) => {
-    // 兼容两种传参：preload 传 { id }，旧调用传裸字符串
-    const id = typeof payload === 'string' ? payload : String((asRecord(payload) as { id?: string }).id ?? '')
+    const id = String((asRecord(payload) as { id?: string }).id ?? '')
     const secret = store.revealSecret(id)
     const ok = store.removeAccount(id)
     if (ok) await cleanupAccountArtifacts(id, secret)
-    return ok
+    return { ok }
   })
 
   // 刷新余额（ids 为空 = 全部启用账号）
@@ -205,9 +212,7 @@ export function registerIpc(): void {
           return {
             ts: Date.now(),
             cookies: parts.join('; '),
-            tokenKey: rule?.sessionTokenKey ?? '',
-            tokenLen: 0,
-            v: 1
+            tokenKey: rule?.sessionTokenKey ?? ''
           }
         }
       : undefined
@@ -255,7 +260,6 @@ export function registerIpc(): void {
       name: typeof p.name === 'string' && p.name ? p.name : '站点',
       partitionHost: partitionHost || undefined,
       extraUrls,
-      success: rule?.success,
       validate: buildValidate(p.platform),
       tokenKey: rule?.tokenKey,
       validateToken: rule?.tokenKey ? validateSenseNovaToken : undefined,
@@ -393,7 +397,7 @@ export function registerIpc(): void {
     const corrected = applyCorrections(raw, accountId)
     const list = listCorrections(accountId)
     const affected: Record<string, number> = {}
-    for (const c of list) affected[c.id] = raw.filter((s) => s.ts >= c.fromTs).length
+    for (const c of list) affected[c.id] = raw.filter((s) => s.ts >= c.fromTs && s.ts < (c.toTs ?? Number.POSITIVE_INFINITY)).length
 
     const points: CorrectionView['points'] = corrected.slice(-limit).map((s, i) => {
       const src = raw[raw.length - Math.min(limit, corrected.length) + i]
@@ -766,10 +770,10 @@ export function registerIpc(): void {
   }),
 
   wrap(IPC.KEY_SECRET, async (payload) => {
-    // 兼容旧调用（直接传 id 字符串 = 账号），新调用传 { id, source }
-    if (typeof payload === 'string') return store.revealSecret(payload)
     const p = asRecord(payload) as { id?: string; source?: string }
     const id = String(p.id ?? '')
+    // 审计：取出明文密钥属于高危动作，谁在什么时候取过，留在运行日志里可追查
+    logger.warn(`[audit] 取出明文密钥：id=${id}（${p.source === 'vault' ? 'keyvault' : 'account'}）`)
     return p.source === 'vault' ? revealVaultKey(id) : store.revealSecret(id)
   }),
 

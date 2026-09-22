@@ -1,14 +1,16 @@
 import { onMounted, onUnmounted, ref } from 'vue'
-import { IPC } from '@shared/ipc'
-import type {
-  AccountInput,
-  AccountView,
-  AppInfo,
-  BalanceRow,
-  PanelPayload,
-  Settings
-} from '@shared/types'
-import { safeInvoke, subscribeRow, subscribeUpdated } from '@renderer/api/ipc'
+import type { AccountInput, AccountView, AppInfo, BalanceRow, Settings } from '@shared/types'
+import {
+  getAppInfo,
+  getSettings,
+  listAccounts,
+  refreshBalances,
+  removeAccount as removeAccountRpc,
+  saveAccount as saveAccountRpc,
+  saveSettings as saveSettingsRpc,
+  subscribeRow,
+  subscribeUpdated
+} from '@renderer/api/ipc'
 
 /**
  * 面板核心状态机：负责账号 / 余额行 / 设置 / 启动信息 的加载与刷新，
@@ -63,7 +65,7 @@ export function usePanel() {
   }
 
   async function reloadAccounts() {
-    const r = await safeInvoke<AccountView[]>(IPC.ACCOUNT_LIST)
+    const r = await listAccounts()
     if (r.ok) accounts.value = r.data
   }
 
@@ -74,7 +76,7 @@ export function usePanel() {
     loading.value = true
     configBanner.value = ''
 
-    const info = await safeInvoke<AppInfo>(IPC.APP_INFO)
+    const info = await getAppInfo()
     if (info.ok) {
       appInfo.value = info.data
       if (info.data.configStatus === 'recovered') {
@@ -88,7 +90,7 @@ export function usePanel() {
 
     await reloadAccounts()
 
-    const st = await safeInvoke<Settings>(IPC.SETTINGS_GET)
+    const st = await getSettings()
     if (st.ok) settings.value = st.data
 
     loading.value = false
@@ -100,7 +102,7 @@ export function usePanel() {
     const ids = accounts.value.filter((a) => a.enabled).map((a) => a.id)
     batchPending = true
     setRefreshing(ids)
-    const r = await safeInvoke<PanelPayload>(IPC.BALANCE_REFRESH, {})
+    const r = await refreshBalances({})
     if (!r.ok) {
       batchPending = false
       refreshingIds.value = new Set()
@@ -111,7 +113,7 @@ export function usePanel() {
   /** 只刷单个账号（force=true 跳过缓存） */
   async function refreshOne(id: string) {
     addRefreshing(id)
-    const r = await safeInvoke<PanelPayload>(IPC.BALANCE_REFRESH, { ids: [id], force: true })
+    const r = await refreshBalances({ ids: [id], force: true })
     if (r.ok) {
       // 兜底：若订阅回调没触发，也用返回值直接更新并解除禁用
       for (const row of r.data.rows) {
@@ -125,11 +127,11 @@ export function usePanel() {
     }
   }
 
-  /** 新增或编辑账号，成功后重载列表并刷新 */
+  /** 新增或编辑账号，成功后重载列表并刷新（基于 api 层纯保存封装组合而成，不再各自维护一份 IPC 调用） */
   async function saveAccount(
     input: AccountInput
   ): Promise<{ ok: true } | { ok: false; error: string }> {
-    const r = await safeInvoke<AccountView>(IPC.ACCOUNT_SAVE, input)
+    const r = await saveAccountRpc(input)
     if (r.ok) {
       await reloadAccounts()
       await refreshAll()
@@ -140,7 +142,7 @@ export function usePanel() {
 
   /** 删除账号，成功后从本地列表移除 */
   async function removeAccount(id: string): Promise<{ ok: boolean; error?: string }> {
-    const r = await safeInvoke<{ ok: boolean }>(IPC.ACCOUNT_REMOVE, id)
+    const r = await removeAccountRpc(id)
     if (r.ok && r.data.ok) {
       accounts.value = accounts.value.filter((a) => a.id !== id)
       rows.value = rows.value.filter((row) => row.accountId !== id)
@@ -153,7 +155,7 @@ export function usePanel() {
   async function saveSettings(
     patch: Partial<Settings>
   ): Promise<{ ok: true } | { ok: false; error: string }> {
-    const r = await safeInvoke<Settings>(IPC.SETTINGS_SAVE, patch)
+    const r = await saveSettingsRpc(patch)
     if (r.ok) {
       settings.value = r.data
       return { ok: true }

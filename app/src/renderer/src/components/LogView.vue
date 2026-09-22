@@ -2,9 +2,15 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { LogLevel } from '@shared/types'
 import { clearLogs, exportLogs, openLogDir, readLogs, setLogLevel } from '@renderer/api/ipc'
+import { formatBytes } from '@renderer/utils/text'
+import { useFlash } from '@renderer/composables/useFlash'
+import { useConfirm } from '@renderer/composables/useConfirm'
 import InfoTip from './InfoTip.vue'
 
 interface Entry { ts: number; level: LogLevel; text: string }
+
+const { msg, flash } = useFlash()
+const { confirm } = useConfirm()
 
 const entries = ref<Entry[]>([])
 const level = ref<LogLevel>('info')
@@ -13,8 +19,7 @@ const filterLevel = ref<'all' | LogLevel>('all')
 const keyword = ref('')
 const autoRefresh = ref(true)
 const loading = ref(false)
-const msg = ref('')
-const expanded = ref<Set<number>>(new Set())
+const expanded = ref<Set<string>>(new Set())
 let timer: ReturnType<typeof setInterval> | null = null
 
 async function load(showLoading = false) {
@@ -26,7 +31,14 @@ async function load(showLoading = false) {
       keyword: keyword.value.trim() || undefined
     })
     if (r.ok) {
-      entries.value = r.data.entries
+      // 无变化时不动列表：避免每 2 秒把 800 行整体重渲染
+      const next = r.data.entries
+      const same =
+        next.length === entries.value.length &&
+        (entries.value.length === 0 ||
+          (next[0].ts === entries.value[0].ts &&
+            next[next.length - 1].ts === entries.value[entries.value.length - 1].ts))
+      if (!same) entries.value = next
       level.value = r.data.level
       files.value = r.data.files
     }
@@ -41,24 +53,22 @@ onMounted(() => {
 })
 onBeforeUnmount(() => { if (timer) clearInterval(timer) })
 
-function flash(text: string) {
-  msg.value = text
-  setTimeout(() => { if (msg.value === text) msg.value = '' }, 3000)
-}
-
 async function onLevelChange(v: LogLevel) {
   const r = await setLogLevel(v)
   if (r.ok) {
     level.value = r.data.level
     flash('日志级别已切换为 ' + r.data.level + (v === 'debug' ? '（会记录请求级细节，重启后恢复 info）' : ''))
     await load()
+  } else {
+    flash('切换日志级别失败：' + r.error)
   }
 }
 
 async function onClear() {
-  if (!window.confirm('清空当前日志？已轮转的历史文件不受影响。')) return
+  if (!(await confirm('清空当前日志？已轮转的历史文件不受影响。', { title: '清空日志', danger: true }))) return
   const r = await clearLogs()
   if (r.ok) { flash('日志已清空'); await load() }
+  else flash('清空失败：' + r.error)
 }
 
 async function onExport() {
@@ -78,10 +88,15 @@ function timeText(ts: number): string {
   return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()) + '.' + p(d.getMilliseconds(), 3)
 }
 
-function toggle(i: number) {
+/** 展开状态按条目内容记（此前用数组下标，筛选/刷新后展开会错位到别的行） */
+function entryKey(e: Entry): string {
+  return e.ts + '|' + e.level + '|' + e.text
+}
+
+function toggle(key: string) {
   const s = new Set(expanded.value)
-  if (s.has(i)) s.delete(i)
-  else s.add(i)
+  if (s.has(key)) s.delete(key)
+  else s.add(key)
   expanded.value = s
 }
 
@@ -90,10 +105,6 @@ const counts = computed(() => {
   for (const e of entries.value) c[e.level] = (c[e.level] ?? 0) + 1
   return c
 })
-
-function sizeText(n: number): string {
-  return n > 1024 * 1024 ? (n / 1024 / 1024).toFixed(1) + ' MB' : (n / 1024).toFixed(1) + ' KB'
-}
 </script>
 
 <template>
@@ -138,10 +149,10 @@ function sizeText(n: number): string {
 
       <div class="list">
         <div v-if="entries.length === 0" class="empty">没有日志记录（{{ filterLevel === 'all' ? '等待运行产生' : '当前筛选无结果' }}）</div>
-        <div v-for="(e, i) in entries" :key="e.ts + '-' + i" class="row" :class="e.level" @click="toggle(i)">
+        <div v-for="e in entries" :key="entryKey(e)" class="row" :class="e.level" @click="toggle(entryKey(e))">
           <span class="t">{{ timeText(e.ts) }}</span>
           <span class="lv-tag" :class="e.level">{{ e.level.toUpperCase() }}</span>
-          <span class="txt" :class="{ wrap: expanded.has(i) }">{{ e.text }}</span>
+          <span class="txt" :class="{ wrap: expanded.has(entryKey(e)) }">{{ e.text }}</span>
         </div>
       </div>
 
@@ -149,7 +160,7 @@ function sizeText(n: number): string {
         <div class="files-head">磁盘日志文件（按 2MB 轮转，保留最近 8 个）</div>
         <div v-for="f in files" :key="f.name" class="file-row">
           <span class="fname">{{ f.name }}</span>
-          <span class="fsize num">{{ sizeText(f.size) }}</span>
+          <span class="fsize num">{{ formatBytes(f.size) }}</span>
           <span class="fmtime muted">{{ new Date(f.mtime).toLocaleString('zh-CN') }}</span>
         </div>
       </div>

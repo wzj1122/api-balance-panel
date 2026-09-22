@@ -10,7 +10,7 @@ import { fmtClock, fmtNumber } from '@shared/format'
  * 2026-09-22 改版（用户要求）：横轴固定为 1 小时 / 6 小时 / 24 小时三个可选时间窗
  * （给定 spanMs 后 x 轴 = [endTs − spanMs, endTs]，不再按数据自适应），
  * 并显示 4~6 个均匀时间刻度（HH:mm），不再是"只有首尾两个时间"。
- * 不传 spanMs 时保持旧行为（按数据范围自适应），兼容其它调用方。
+ * 不传 spanMs 的自适应模式已删除：唯一调用方（AccountCard 趋势悬浮窗）恒传 spanMs / endTs。
  */
 
 interface TrendPoint {
@@ -20,10 +20,10 @@ interface TrendPoint {
 
 const props = defineProps<{
   data: TrendPoint[]
-  /** 固定横轴窗口（毫秒）：1h / 6h / 24h；缺省 = 按数据自适应（旧行为） */
-  spanMs?: number | null
-  /** 窗口右端时间戳（毫秒）；缺省用最后一个数据点 */
-  endTs?: number | null
+  /** 固定横轴窗口（毫秒）：1h / 6h / 24h */
+  spanMs: number
+  /** 窗口右端时间戳（毫秒） */
+  endTs: number
 }>()
 
 const gradId = 'tc-' + useId().replace(/[^a-zA-Z0-9_-]/g, '')
@@ -41,19 +41,16 @@ const raw = computed(() =>
     .map((p) => ({ ts: p.ts, remaining: p.remaining as number }))
 )
 
-/** 固定窗口 [start, end]；无 spanMs 时为 null（自适应模式） */
+/** 固定窗口 [start, end] */
 const win = computed(() => {
-  if (!props.spanMs || props.spanMs <= 0) return null
-  const last = raw.value.length > 0 ? raw.value[raw.value.length - 1].ts : Date.now()
-  const end = typeof props.endTs === 'number' && Number.isFinite(props.endTs) ? props.endTs : last
+  const end = Number.isFinite(props.endTs) ? props.endTs : Date.now()
   return { start: end - props.spanMs, end, span: props.spanMs }
 })
 
-/** 只画窗口内的点（固定轴模式） */
+/** 只画窗口内的点 */
 const pts = computed(() => {
   const list = raw.value
   const w = win.value
-  if (!w) return list
   return list.filter((p) => p.ts >= w.start && p.ts <= w.end)
 })
 
@@ -79,20 +76,9 @@ const mapped = computed(() => {
   const pad = (r.maxV - r.minV) * 0.12 || Math.abs(r.maxV) * 0.12 || 1
   const yMin = r.minV - pad
   const yMax = r.maxV + pad
-  if (w) {
-    // 固定轴：x = 时间在窗口内的位置（与数据疏密无关）
-    return pts.value.map((p) => {
-      const x = Math.max(0, Math.min(W, ((p.ts - w.start) / w.span) * W))
-      const y = H - ((p.remaining - yMin) / (yMax - yMin)) * H
-      return { x, y }
-    })
-  }
-  // 自适应轴（旧行为）
-  const first = pts.value[0].ts
-  const last = pts.value[pts.value.length - 1].ts
-  const xSpan = last - first
+  // x = 时间在窗口内的位置（与数据疏密无关）
   return pts.value.map((p) => {
-    const x = xSpan > 0 ? ((p.ts - first) / xSpan) * W : W / 2
+    const x = Math.max(0, Math.min(W, ((p.ts - w.start) / w.span) * W))
     const y = H - ((p.remaining - yMin) / (yMax - yMin)) * H
     return { x, y }
   })
@@ -113,15 +99,12 @@ const areaPath = computed(() => {
   return head + ' ' + mid + ' ' + tail
 })
 
-const firstTs = computed(() => pts.value[0]?.ts ?? 0)
-const lastTs = computed(() => pts.value[pts.value.length - 1]?.ts ?? 0)
 const yMaxLabel = computed(() => range.value?.maxV ?? 0)
 const yMinLabel = computed(() => range.value?.minV ?? 0)
 
-/** 固定窗口模式的均匀刻度（时间戳 + 在轴上的位置比例） */
+/** 均匀刻度（时间戳 + 在轴上的位置比例） */
 const ticks = computed(() => {
   const w = win.value
-  if (!w) return []
   const out: { ts: number; frac: number }[] = []
   for (let i = 0; i < TICK_COUNT; i++) {
     const frac = i / (TICK_COUNT - 1)
@@ -130,7 +113,7 @@ const ticks = computed(() => {
   return out
 })
 
-/** 刻度标签（HH:mm）；自适应模式为空 → 界面退回首尾两个时间 */
+/** 刻度标签（HH:mm） */
 const tickLabels = computed(() => ticks.value.map((t) => fmtHm(t.ts)))
 
 /** 固定窗口内没有任何快照时，给一句针对性的空态文案 */
@@ -196,13 +179,9 @@ function tickStyle(i: number): Record<string, string> {
         </svg>
       </div>
     </div>
-    <!-- 固定窗口模式：均匀多刻度；自适应模式：沿用首尾两个时间 -->
-    <div v-if="tickLabels.length" class="x-axis fixed">
+    <!-- 均匀时间刻度 -->
+    <div class="x-axis fixed">
       <span v-for="(lb, i) in tickLabels" :key="i" :style="tickStyle(i)">{{ lb }}</span>
-    </div>
-    <div v-else class="x-axis">
-      <span>{{ fmtHm(firstTs) }}</span>
-      <span>{{ fmtHm(lastTs) }}</span>
     </div>
   </div>
 </template>

@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import type { ReportPeriod, UsageReport } from '@shared/types'
-import { PROVIDER_META } from '@shared/constants'
 import { fmtClock, fmtNumber } from '@shared/format'
 import { getUsageReport } from '@renderer/api/ipc'
+import { dateStamp, providerLabel } from '@renderer/utils/text'
+import { downloadDataUrl } from '@renderer/utils/download'
 import InfoTip from './InfoTip.vue'
 
 const loading = ref(false)
@@ -55,11 +56,6 @@ const detail = computed(() => {
 /** 主数值 = 当前单位合计（修复：以前读错了字段，顶部大数字一直是 undefined） */
 const total = computed(() => detail.value?.total ?? 0)
 const unit = computed(() => detail.value?.unit ?? report.value?.unit ?? '')
-
-function typeLabel(t: string): string {
-  const m = PROVIDER_META[t as keyof typeof PROVIDER_META]
-  return m?.label ?? t
-}
 
 const deltaText = computed(() => {
   const d = detail.value?.deltaPct
@@ -130,7 +126,7 @@ function makeCard() {
   ctx.font = '400 22px system-ui, "Microsoft YaHei", sans-serif'
   const d = new Date(r.fromTs)
   const d2 = new Date(r.toTs)
-  ctx.fillText(period.value === 'day' ? fmtDate(d) : fmtDate(d) + ' — ' + fmtDate(d2), 64, 134)
+  ctx.fillText(period.value === 'day' ? dateStamp(d) : dateStamp(d) + ' — ' + dateStamp(d2), 64, 134)
   // 总消耗
   ctx.fillStyle = '#ffffff'
   ctx.font = '800 112px system-ui, "Microsoft YaHei", sans-serif'
@@ -192,7 +188,7 @@ function makeCard() {
     const y = shareTop + 44 + i * 64
     ctx.fillStyle = '#c9d4e6'
     ctx.font = '500 26px system-ui, "Microsoft YaHei", sans-serif'
-    ctx.fillText(typeLabel(s.type), 64, y + 22)
+    ctx.fillText(providerLabel(s.type), 64, y + 22)
     const barW = 460
     ctx.fillStyle = 'rgba(255,255,255,0.08)'
     roundRect(ctx, 330, y, barW, 26, 13)
@@ -220,13 +216,7 @@ function makeCard() {
   ctx.font = '400 20px system-ui, "Microsoft YaHei", sans-serif'
   ctx.fillText('数据来自本机余额快照 · 由 API 余额面板生成', 64, H - 40)
   // 下载
-  const url = canvas.toDataURL('image/png')
-  const a = document.createElement('a')
-  a.href = url
-  a.download = 'AI使用报告-' + r.title.replace(/\s/g, '') + '-' + fmtDate(new Date()) + '.png'
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
+  downloadDataUrl('AI使用报告-' + r.title.replace(/\s/g, '') + '-' + dateStamp() + '.png', canvas.toDataURL('image/png'))
   cardMsg.value = '分享卡片已保存到下载目录 ✓'
   setTimeout(() => { cardMsg.value = '' }, 2600)
 }
@@ -273,10 +263,6 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
   ctx.lineTo(x, y + r)
   ctx.quadraticCurveTo(x, y, x + r, y)
   ctx.closePath()
-}
-
-function fmtDate(d: Date): string {
-  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
 }
 </script>
 
@@ -340,7 +326,7 @@ function fmtDate(d: Date): string {
             <div class="panel-title">消耗构成 · {{ unit }}</div>
             <div v-if="!detail || detail.platformShare.length === 0" class="muted small">本期没有消耗记录</div>
             <div v-for="s in detail?.platformShare ?? []" :key="s.type" class="share-row">
-              <span class="share-name">{{ typeLabel(s.type) }}</span>
+              <span class="share-name">{{ providerLabel(s.type) }}</span>
               <span class="share-track"><span class="share-fill" :style="{ width: s.pct + '%' }"></span></span>
               <span class="share-num num">{{ fmtNumber(s.value) }}</span>
               <span class="share-pct num">{{ s.pct.toFixed(0) }}%</span>
@@ -396,9 +382,7 @@ function fmtDate(d: Date): string {
 .head { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; padding: 20px var(--pad-lg) 8px; }
 .head h2 { font-size: 19px; font-weight: 700; color: var(--tx-strong); margin: 0; display: flex; align-items: center; gap: 8px; }
 .tools { display: flex; align-items: center; gap: 8px; }
-.seg { display: inline-flex; gap: 4px; background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 3px; }
-.seg button { border: none; background: transparent; color: var(--tx2); font-size: var(--fs-sub); font-weight: 500; padding: 5px 12px; border-radius: 8px; cursor: pointer; transition: background var(--dur) ease, color var(--dur) ease; }
-.seg button.on { background: var(--card); color: var(--acc); font-weight: 600; box-shadow: var(--shadow-sm); }
+/* .seg 基础样式统一在 global.css */
 .scroll { flex: 1; overflow-y: auto; padding: 8px var(--pad-lg) 40px; }
 .probe-msg { margin: 6px 0 10px; padding: 8px 12px; border-radius: 10px; background: var(--ok-soft); color: var(--tx); font-size: 12.5px; }
 .hero-card { position: relative; background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 22px 26px; box-shadow: var(--shadow-sm); overflow: hidden; background-image: linear-gradient(120deg, var(--acc-soft) 0%, transparent 60%); margin-bottom: var(--gap); }

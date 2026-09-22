@@ -13,7 +13,10 @@ import {
   ZHIPU_LOGIN_URL
 } from '@shared/constants'
 import type { AccountInput, AccountType, AccountView, CustomRequest } from '@shared/types'
+import { useConfirm } from '@renderer/composables/useConfirm'
 import BaseModal from './BaseModal.vue'
+
+const { confirm } = useConfirm()
 
 const props = defineProps<{
   open: boolean
@@ -72,6 +75,8 @@ const loginStatus = ref('')
 const addBoth = ref(false)
 /** 点保存但校验没过时的汇总提示（顶部 banner，保证用户看得见"为什么没保存成功"） */
 const saveHint = ref('')
+/** 保存进行中：防重复点击重复提交 */
+const saving = ref(false)
 
 /** 是否缺少另一种方式（mimo 缺套餐 / mimo-plan 缺余额），用于提示 */
 const otherMissing = () => {
@@ -105,6 +110,7 @@ function initForm() {
   const type = (a?.type ?? 'deepseek') as AccountType
   const m = PROVIDER_META[type]
   saveHint.value = ''
+  saving.value = false
   form.id = a?.id
   form.name = a?.name ?? ''
   form.type = type
@@ -142,6 +148,9 @@ watch(
   { immediate: true }
 )
 
+// 保存失败（父组件回填 error）时解除按钮禁用，允许修正后重试
+watch(() => props.error, (e) => { if (e) saving.value = false })
+
 function onTypeChange() {
   const m = PROVIDER_META[form.type]
   form.threshold = m.defaultThreshold
@@ -152,9 +161,9 @@ function onTypeChange() {
   if (form.type === 'newapi') form.quota_per_usd = DEFAULT_QUOTA_PER_USD
 }
 
-function toggleReveal() {
+async function toggleReveal() {
   if (!reveal.value) {
-    const ok = window.confirm('确定显示明文密钥？明文会显示在屏幕上，请确认旁边没有他人。')
+    const ok = await confirm('确定显示明文密钥？明文会显示在屏幕上，请确认旁边没有他人。', { title: '显示明文密钥' })
     if (!ok) return
   }
   reveal.value = !reveal.value
@@ -235,6 +244,7 @@ async function relogin(): Promise<void> {
     return
   }
   saveHint.value = ''
+  saving.value = true
   emit('save', buildPayload())
 }
 
@@ -366,6 +376,8 @@ function onSave() {
     return
   }
   saveHint.value = ''
+  // 防重复提交：保存期间禁用按钮（此前可连点连发多个保存请求）
+  saving.value = true
   if (addBoth.value && !isEdit() && otherMissing() && otherType()) {
     emit('save-both', [buildPayload(), buildSecondaryPayload(otherType() as AccountType)])
   } else {
@@ -614,7 +626,7 @@ function onSave() {
 
     <template #footer>
       <button class="btn ghost" type="button" @click="emit('close')">取消</button>
-      <button class="btn primary" type="button" @click="onSave">保存账号</button>
+      <button class="btn primary" type="button" :disabled="saving" @click="onSave">{{ saving ? '保存中…' : '保存账号' }}</button>
     </template>
   </BaseModal>
 </template>

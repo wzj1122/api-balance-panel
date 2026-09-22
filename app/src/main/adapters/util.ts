@@ -51,6 +51,17 @@ export function safeJson(text: string, url = ''): unknown {
   }
 }
 
+/**
+ * 401/403 统一判定为「登录已失效」（COOKIE_EXPIRED，触发续期 / 重新登录链路）。
+ * hint 是该平台的重新登录指引，会拼进错误详情（说人话，别只报状态码）。
+ * 六个登录型适配器共用，替代此前逐文件复制的两行判定。
+ */
+export function assertNotExpired(res: { status: number }, hint: string): void {
+  if (res.status === 401 || res.status === 403) {
+    throw new AdapterError('COOKIE_EXPIRED', '登录已失效（' + res.status + '），' + hint)
+  }
+}
+
 /** 保留 6 位小数（与原型 round(x, 6) 对齐，避免浮点误差） */
 export function round6(v: number): number {
   return Math.round(v * 1e6) / 1e6

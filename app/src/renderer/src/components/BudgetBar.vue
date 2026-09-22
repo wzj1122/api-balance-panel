@@ -53,7 +53,7 @@ function barPct(r: Row): number {
   <div v-if="hasBudget && rows.length > 0" class="budget">
     <div class="budget-head">
       <span class="budget-title">今日预算</span>
-      <InfoTip text="在「设置 → 预算与提醒」里按单位设置每天最多花多少。进度条显示今日已消耗占预算的比例，达到 80% 和 100% 时会各提醒一次；「按预算可用」= 当前余额 ÷ 每日预算。" />
+      <InfoTip text="在「设置 → 每日预算与告警」里按单位设置每天最多花多少。进度条显示今日已消耗占预算的比例，达到 80% 和 100% 时会各提醒一次；「按预算可用」= 当前余额 ÷ 每日预算。" />
     </div>
     <div class="budget-rows">
       <div v-for="r in rows" :key="r.unit" class="budget-row" :class="{ over: r.over, warn: r.warn }">

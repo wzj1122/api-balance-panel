@@ -8,7 +8,7 @@
  */
 
 /** 跟随系统时使用的主题（经典深色 / 经典浅色） */
-export const SYSTEM_THEME: { dark: string; light: string } = {
+const SYSTEM_THEME: { dark: string; light: string } = {
   dark: 'dark',
   light: 'light'
 }

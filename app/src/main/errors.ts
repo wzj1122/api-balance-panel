@@ -5,7 +5,7 @@ import type { BalanceResult, ErrorCode } from '../shared/types'
  * 适配器只抛/传错误码，文案统一由这里产出，改文案只改一处。
  */
 
-export const ERROR_TEXT: Record<ErrorCode, (detail?: string) => string> = {
+const ERROR_TEXT: Record<ErrorCode, (detail?: string) => string> = {
   HTTP_401: () => '密钥错了或过期了，去平台后台重新生成一个',
   HTTP_403: () => '密钥错了或过期了，去平台后台重新生成一个',
   HTTP_404: () => '网址填错了，检查中转站地址（只填域名，不要带 /v1）',

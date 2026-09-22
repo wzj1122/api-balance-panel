@@ -7,7 +7,7 @@ import { refresh } from './query'
  * 窗口隐藏（最小化）时暂停，回到前台立即补刷一次；设置里改了刷新间隔后
  * 用 reset() 热重启定时器，不用重启应用。
  */
-export class Scheduler {
+class Scheduler {
   private timer: NodeJS.Timeout | null = null
   private seconds = 300
   private paused = false
@@ -62,16 +62,6 @@ export class Scheduler {
   /** 当前是否处于暂停状态 */
   isPaused(): boolean {
     return this.paused
-  }
-
-  /** 手动切换暂停：返回切换后是否处于暂停 */
-  toggle(): boolean {
-    if (this.paused) {
-      void this.resume()
-      return false
-    }
-    this.pause()
-    return true
   }
 
   /** 停止定时器（应用退出前） */

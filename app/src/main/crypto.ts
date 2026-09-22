@@ -1,6 +1,6 @@
 import crypto from 'node:crypto'
 import os from 'node:os'
-import { app, safeStorage } from 'electron'
+import { safeStorage } from 'electron'
 import { logger } from './logger'
 
 /**
@@ -85,7 +85,7 @@ function deobfuscate(enc: string): string {
   return out.toString('utf8')
 }
 
-export const SCHEMES: Record<CryptoScheme, SchemeImpl> = {
+const SCHEMES: Record<CryptoScheme, SchemeImpl> = {
   'safeStorage-v1': {
     encrypt(plain: string): string {
       return safeStorage.encryptString(plain).toString('base64')
@@ -125,4 +125,15 @@ export function decrypt(enc: string | null | undefined, scheme: CryptoScheme = c
     logger.error(`[crypto] 解密失败（scheme=${scheme}）：`, (e as Error).message)
     return ''
   }
+}
+
+/**
+ * 双方案解密回退：主方案解不开时自动试另一种（环境变化 / 换机后旧配置不用迁移也能读）。
+ * store / keyvault / monitor 共用，替代此前各写一份的 fallback。
+ */
+export function decryptWithFallback(enc: string | null | undefined, scheme: CryptoScheme = currentScheme()): string {
+  const plain = decrypt(enc, scheme)
+  if (plain || !enc) return plain
+  const other: CryptoScheme = scheme === 'safeStorage-v1' ? 'obfuscate-v1' : 'safeStorage-v1'
+  return decrypt(enc, other)
 }

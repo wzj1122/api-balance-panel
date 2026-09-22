@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto'
-import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import { DEFAULT_SETTINGS } from '../shared/constants'
 import type { BalanceRow, Snapshot, SnapshotItem } from '../shared/types'
@@ -7,6 +6,7 @@ import { applyCorrections } from './corrections'
 import { demoSnapshots, isDemo } from './demo'
 import { logger } from './logger'
 import { SNAPSHOT_FILE, ensureDirs } from './paths'
+import { store } from './store'
 
 /**
  * 余额快照：每次查询（成功与失败都记）追加一条，供二期画趋势图。
@@ -21,6 +21,8 @@ const FLUSH_DELAY = 1000
 let cache: Snapshot[] | null = null
 let flushTimer: NodeJS.Timeout | null = null
 let writing = false
+/** 写盘进行中又来了新数据 → 写完这一轮再补写一次 */
+let writeQueued = false
 
 /** 快照文件结构（损坏时整体丢弃重建，快照不是关键数据） */
 interface SnapshotFile {
@@ -64,8 +66,7 @@ function toSnapshot(row: BalanceRow): Snapshot {
     unit: row.unit ?? '',
     note: row.note ?? '',
     items,
-    latency_ms: row.latencyMs ?? 0,
-    source: row.cached ? 'cache' : 'live'
+    latency_ms: row.latencyMs ?? 0
   }
 }
 
@@ -104,7 +105,8 @@ export function append(rows: BalanceRow[]): void {
     try {
       const all = await loadAll()
       for (const row of rows) all.push(toSnapshot(row))
-      prune(DEFAULT_SETTINGS.snapshot_retention_days)
+      // 保留天数用「用户设置」（此前写死默认值，改设置无效）
+      prune(store.getSettings().snapshot_retention_days)
       scheduleFlush()
     } catch (e) {
       logger.error('[snapshot] 追加快照失败：', (e as Error).message)
@@ -116,7 +118,7 @@ export function append(rows: BalanceRow[]): void {
  * 裁剪：超过保留天数的删掉；每个账号只留最新 MAX_PER_ACCOUNT 条。
  * 调用方需要先 loadAll()。
  */
-export function prune(days: number = DEFAULT_SETTINGS.snapshot_retention_days): void {
+function prune(days: number = DEFAULT_SETTINGS.snapshot_retention_days): void {
   if (!cache) return
   const keepDays = days > 0 ? days : DEFAULT_SETTINGS.snapshot_retention_days
   const deadline = Date.now() - keepDays * 24 * 60 * 60 * 1000
@@ -149,16 +151,27 @@ function scheduleFlush(): void {
   }, FLUSH_DELAY)
 }
 
-/** 立即把内存里的快照写到磁盘（原子写：tmp + rename） */
+/**
+ * 立即把内存里的快照写到磁盘（原子写：tmp + rename）。
+ * 并发调用不丢写：写盘过程中又来 flush 请求时排个队，本轮写完再补写一次，
+ * 直到没有新请求为止（此前 writing 旗标会把并发请求静默吞掉，退出时丢数据）。
+ */
 export async function flush(): Promise<void> {
-  if (!cache || writing) return
+  if (!cache) return
+  if (writing) {
+    writeQueued = true
+    return
+  }
   writing = true
   try {
-    ensureDirs()
-    const tmp = `${SNAPSHOT_FILE}.tmp`
-    const payload: SnapshotFile = { version: 1, items: cache }
-    await fsp.writeFile(tmp, JSON.stringify(payload), 'utf8')
-    await fsp.rename(tmp, SNAPSHOT_FILE)
+    do {
+      writeQueued = false
+      ensureDirs()
+      const tmp = `${SNAPSHOT_FILE}.tmp`
+      const payload: SnapshotFile = { version: 1, items: cache }
+      await fsp.writeFile(tmp, JSON.stringify(payload), 'utf8')
+      await fsp.rename(tmp, SNAPSHOT_FILE)
+    } while (writeQueued)
   } catch (e) {
     logger.error('[snapshot] 写盘失败：', (e as Error).message)
   } finally {
@@ -172,13 +185,9 @@ export async function listByAccount(accountId: string): Promise<Snapshot[]> {
   return all.filter((s) => s.account_id === accountId)
 }
 
-/** 当前快照总条数（自检 / 设置页展示用） */
-
 /** 删除某账号的全部快照（账号被删除时可调用；当前不在 UI 暴露） */
 export async function removeByAccount(accountId: string): Promise<void> {
   const all = await loadAll()
   cache = all.filter((s) => s.account_id !== accountId)
   await flush()
 }
-
-/** 判断快照文件是否存在（避免无谓的读盘） */

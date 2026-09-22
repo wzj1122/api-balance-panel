@@ -3,7 +3,7 @@ import type { BalanceItem } from '../../shared/types'
 import { AdapterError, mapHttpStatus } from '../errors'
 import { request } from '../http'
 import type { Adapter } from './types'
-import { dig, num, okResult, safeJson } from './util'
+import { assertNotExpired, dig, num, okResult, safeJson } from './util'
 
 /**
  * 小米 MiMo Token Plan 套餐（Cookie，与「小米 MiMo」余额共用同一登录状态）。
@@ -22,9 +22,7 @@ export const mimoPlanAdapter: Adapter = async (account, ctx) => {
 
   // 1) 套餐详情（名称 + 有效期）
   const r1 = await request(MIMO_PLAN_DETAIL_URL, { headers })
-  if (r1.status === 401 || r1.status === 403) {
-    throw new AdapterError('COOKIE_EXPIRED', '登录已失效（' + r1.status + '），请点「登录 MiMo」重新登录一次')
-  }
+  assertNotExpired(r1, '请点「登录 MiMo」重新登录一次')
   if (r1.status !== 200) throw new AdapterError(mapHttpStatus(r1.status), r1.text.slice(0, 160))
   const d1 = (dig(safeJson(r1.text, MIMO_PLAN_DETAIL_URL), 'data') as Record<string, unknown>) ?? {}
   const planCode = typeof d1.planCode === 'string' ? d1.planCode : ''
@@ -36,9 +34,7 @@ export const mimoPlanAdapter: Adapter = async (account, ctx) => {
 
   // 2) 用量（used / limit）
   const r2 = await request(MIMO_PLAN_URL, { headers })
-  if (r2.status === 401 || r2.status === 403) {
-    throw new AdapterError('COOKIE_EXPIRED', '登录已失效（' + r2.status + '），请点「登录 MiMo」重新登录一次')
-  }
+  assertNotExpired(r2, '请点「登录 MiMo」重新登录一次')
   if (r2.status !== 200) throw new AdapterError(mapHttpStatus(r2.status), r2.text.slice(0, 160))
   const j2 = safeJson(r2.text, MIMO_PLAN_URL)
   const usageItems = dig(j2, 'data.usage.items')

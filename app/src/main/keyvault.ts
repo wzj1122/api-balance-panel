@@ -1,9 +1,9 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { maskSecret } from '../shared/format'
+import { maskSecret, normalizeTags } from '../shared/format'
 import type { KeyVaultInput } from '../shared/types'
-import { CRYPTO_VERSION, currentScheme, decrypt, encrypt } from './crypto'
+import { CRYPTO_VERSION, currentScheme, decryptWithFallback, encrypt } from './crypto'
 import { logger } from './logger'
 import { DATA_DIR } from './paths'
 
@@ -46,7 +46,19 @@ export function listVaultKeys(): VaultKey[] {
   try {
     const raw = JSON.parse(fs.readFileSync(KEYS_FILE, 'utf8')) as KeysFile
     cache = Array.isArray(raw?.keys) ? raw.keys : []
-  } catch {
+  } catch (e) {
+    // 与 store 的 config.json 同一策略：坏文件先改名归档（不删，留给用户自己救）再重建，
+    // 避免下一次保存把现场覆盖掉
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+      let archived: string | null = null
+      try {
+        archived = path.join(DATA_DIR, `keys.corrupt-${Date.now()}.json`)
+        fs.renameSync(KEYS_FILE, archived)
+      } catch {
+        archived = null
+      }
+      logger.error(`[keyvault] keys.json 解析失败，已按空库重建（坏文件另存为 ${archived ?? '未知'}）：${(e as Error).message}`)
+    }
     cache = []
   }
   return cache
@@ -60,17 +72,6 @@ function save(): void {
   } catch (e) {
     logger.warn('[keyvault] 写入失败：' + (e as Error).message)
   }
-}
-
-function normalizeTags(raw: unknown): string[] {
-  if (!Array.isArray(raw)) return []
-  const out: string[] = []
-  for (const v of raw) {
-    const s = String(v ?? '').trim().slice(0, 16)
-    if (s && !out.includes(s)) out.push(s)
-    if (out.length >= 8) break
-  }
-  return out
 }
 
 export function saveVaultKey(input: KeyVaultInput): VaultKey {
@@ -118,11 +119,8 @@ export function removeVaultKey(id: string): boolean {
 export function revealVaultKey(id: string): string {
   const k = listVaultKeys().find((x) => x.id === id)
   if (!k || !k.secret_enc) return ''
-  try {
-    return decrypt(k.secret_enc, k.secret_scheme as Parameters<typeof decrypt>[1])
-  } catch {
-    try { return decrypt(k.secret_enc) } catch { return '' }
-  }
+  // 双方案解密回退统一走 crypto.decryptWithFallback
+  return decryptWithFallback(k.secret_enc, k.secret_scheme as Parameters<typeof decryptWithFallback>[1])
 }
 
 export function vaultFingerprint(id: string): string {

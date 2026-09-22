@@ -14,8 +14,19 @@ export interface HttpRequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE'
   headers?: Record<string, string>
   body?: string
-  /** 超时毫秒，缺省用设置里的 15000 */
+  /** 超时毫秒，缺省用设置里的 timeout_ms（默认 15000） */
   timeoutMs?: number
+}
+
+/**
+ * 默认超时（毫秒）。
+ * 由 store 在加载 / 修改设置时调用 setDefaultTimeoutMs 同步，
+ * 让「设置里的 timeout_ms」真正对所有适配器请求生效（此前只用常量默认值，改设置无效）。
+ */
+let defaultTimeoutMs: number = DEFAULT_SETTINGS.timeout_ms
+
+export function setDefaultTimeoutMs(ms: number): void {
+  if (Number.isFinite(ms) && ms >= 1000 && ms <= 120000) defaultTimeoutMs = ms
 }
 
 export interface HttpResponse {
@@ -36,7 +47,7 @@ function hasNonAscii(s: string): boolean {
  * 抓包时很容易把中文备注一起粘进 URL 或 Header，浏览器/Node 会因为编码直接崩，
  * 这里提前拦下来，给人看得懂的提示。
  */
-export function assertAscii(url: string, headers?: Record<string, string>): void {
+function assertAscii(url: string, headers?: Record<string, string>): void {
   if (!url) throw new AdapterError('BAD_URL', url)
   if (hasNonAscii(url)) {
     throw new AdapterError('BAD_URL', '网址里有中文或特殊字符')
@@ -53,7 +64,7 @@ export function assertAscii(url: string, headers?: Record<string, string>): void
  * 非 2xx 不抛；网络异常 / 超时向外抛（由上层 mapFetchError 归类）。
  */
 export async function request(url: string, options: HttpRequestOptions = {}): Promise<HttpResponse> {
-  const timeoutMs = options.timeoutMs && options.timeoutMs > 0 ? options.timeoutMs : DEFAULT_SETTINGS.timeout_ms
+  const timeoutMs = options.timeoutMs && options.timeoutMs > 0 ? options.timeoutMs : defaultTimeoutMs
 
   assertAscii(url, options.headers)
 

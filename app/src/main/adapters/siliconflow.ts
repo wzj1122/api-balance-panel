@@ -2,7 +2,7 @@ import type { Account, BalanceItem } from '../../shared/types'
 import { AdapterError } from '../errors'
 import { request } from '../http'
 import type { Adapter } from './types'
-import { dig, num, okResult, round6 } from './util'
+import { assertNotExpired, dig, num, okResult, round6 } from './util'
 
 /**
  * 硅基流动 SiliconFlow（Cookie + x-subject-id 版）。
@@ -22,11 +22,11 @@ import { dig, num, okResult, round6 } from './util'
 /** 平台金额单位：接口返回整数，1 元 = 1e12 单位 */
 const YUAN_SCALE = 1_000_000_000_000
 
-export const SILICONFLOW_BASE = 'https://cloud.siliconflow.cn'
-export const SILICONFLOW_PAGE = SILICONFLOW_BASE + '/me/expensebill'
-export const SILICONFLOW_PROFILE =
+const SILICONFLOW_BASE = 'https://cloud.siliconflow.cn'
+const SILICONFLOW_PAGE = SILICONFLOW_BASE + '/me/expensebill'
+const SILICONFLOW_PROFILE =
   SILICONFLOW_BASE + '/walletd-server/api/v1/subject/profile/peek'
-export function SILICONFLOW_WALLETS(stage: number, pageSize = 15): string {
+function SILICONFLOW_WALLETS(stage: number, pageSize = 15): string {
   return (
     SILICONFLOW_BASE +
     '/walletd-server/api/v1/subject/wallets?pageSize=' +
@@ -44,7 +44,7 @@ function yuan(v: unknown): number | null {
 }
 
 /** 从控制台页面 HTML 提取当前主体 id：window.SF_SUBJECT_ID = '…' */
-export function parseSubjectId(html: string): string | null {
+function parseSubjectId(html: string): string | null {
   const m = html.match(/window\.SF_SUBJECT_ID\s*=\s*'([A-Za-z0-9]+)'/)
   if (m) return m[1]
   const m2 = html.match(/"subjectId"\s*:\s*"([A-Za-z0-9]+)"/)
@@ -52,7 +52,7 @@ export function parseSubjectId(html: string): string | null {
 }
 
 /** 解析 profile/peek 的财务信息（金额已折算为元） */
-export function parseFinancial(j: unknown): {
+function parseFinancial(j: unknown): {
   balance: number | null
   available: number | null
   recharged: number | null
@@ -70,7 +70,7 @@ export function parseFinancial(j: unknown): {
   }
 }
 
-export interface WalletEntry {
+interface WalletEntry {
   name: string
   remaining: number | null
   cap: number | null
@@ -79,7 +79,7 @@ export interface WalletEntry {
 }
 
 /** 解析代金券 / 资源包列表（wallets 接口，status: 0=可用 1=已用尽） */
-export function parseWallets(j: unknown): WalletEntry[] | null {
+function parseWallets(j: unknown): WalletEntry[] | null {
   const arr = dig(j, 'data.wallets')
   if (!Array.isArray(arr)) return null
   const out: WalletEntry[] = []
@@ -133,9 +133,7 @@ export const siliconflowAdapter: Adapter = async (account: Account, ctx) => {
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0 Safari/537.36'
     }
   })
-  if (page.status === 401 || page.status === 403) {
-    throw new AdapterError('COOKIE_EXPIRED', '登录已失效（' + page.status + '），请重新登录。')
-  }
+  assertNotExpired(page, '请重新登录。')
   const subjectId = parseSubjectId(page.text)
   if (!subjectId) {
     if (isLoginWall(page.text)) {
@@ -155,9 +153,7 @@ export const siliconflowAdapter: Adapter = async (account: Account, ctx) => {
 
   // 2) 余额（profile/peek）
   const prof = await request(SILICONFLOW_PROFILE, { headers })
-  if (prof.status === 401 || prof.status === 403) {
-    throw new AdapterError('COOKIE_EXPIRED', '登录已失效（' + prof.status + '），请重新登录。')
-  }
+  assertNotExpired(prof, '请重新登录。')
   let fin: ReturnType<typeof parseFinancial> = null
   try {
     fin = parseFinancial(JSON.parse(prof.text))

@@ -89,7 +89,6 @@ export function isUsageBased(list: Snapshot[]): boolean {
   const rem = list.map((s) => s.remaining).filter((v): v is number => v !== null && v !== undefined && Number.isFinite(v))
   const used = list.map((s) => s.used).filter((v): v is number => v !== null && v !== undefined && Number.isFinite(v))
   if (used.length < 2) return false
-  const span = (arr: number[]): number => (arr.length < 2 ? 0 : Math.max(...arr) - Math.min(...arr))
   const relSpan = (arr: number[]): number => {
     if (arr.length < 2) return 0
     const mx = Math.max(...arr)
@@ -97,7 +96,6 @@ export function isUsageBased(list: Snapshot[]): boolean {
     return (mx - mn) / Math.max(Math.abs(mx), Math.abs(mn), 1)
   }
   const usedGrows = used[used.length - 1] > used[0]
-  const remSpan = span(rem)
   const remRel = relSpan(rem)
   // 用量型：余额基本不动（相对波动 < 1%）+ used 明显增长（相对 > 1%）
   return remRel < 0.01 && usedGrows && relSpan(used) > 0.01
@@ -129,6 +127,11 @@ interface DailyDetail {
   gapTotal: number
 }
 
+/** 保留 4 位小数（统计口径统一用它，避免浮点毛刺） */
+function round4(v: number): number {
+  return Math.round(v * 10000) / 10000
+}
+
 /**
  * 单账号逐日消耗明细。
  *
@@ -136,11 +139,6 @@ interface DailyDetail {
  *   这段下降不计入当天，改记入 gapDays —— 否则关几天再打开会把整段消耗堆到重启那天。
  * - gapDays/gapTotal：跨期（停机）消耗，单独标记，不参与日均、预估与预算判断。
  */
-/** 保留 4 位小数（统计口径统一用它，避免浮点毛刺） */
-function round4(v: number): number {
-  return Math.round(v * 10000) / 10000
-}
-
 export function dailyConsumedDetailed(
   list: Snapshot[],
   slices: DaySlice[],
@@ -320,9 +318,8 @@ export async function buildDailyUsage(days: number = 30): Promise<DailyUsageRepo
       remaining = latest.remaining
     }
 
-    // 累计总额（进度条分母）：余额上升 = 充值，把增量累加；同时记住这一轮从哪一刻开始
+    // 累计总额（进度条分母）：余额上升 = 充值，把增量累加
     let creditTotal: number | null = null
-    let cycleStartTs: number | null = null
     {
       let prevRem: number | null = null
       let sum = 0
@@ -334,13 +331,11 @@ export async function buildDailyUsage(days: number = 30): Promise<DailyUsageRepo
           sum = rem
           started = true
           prevRem = rem
-          cycleStartTs = s.ts
           continue
         }
         const prev = prevRem as number
         if (rem > prev + 1e-9) {
           sum += rem - prev
-          cycleStartTs = s.ts
         }
         prevRem = rem
       }
@@ -382,7 +377,6 @@ export async function buildDailyUsage(days: number = 30): Promise<DailyUsageRepo
       })(),
       suggestedThreshold: avg7 !== null && avg7 > 0 ? Math.round(avg7 * 3 * 100) / 100 : null,
       creditTotal,
-      cycleStartTs,
       days: daysVals,
       today,
       avg7,
@@ -669,7 +663,7 @@ function periodWindow(period: ReportPeriod, now: number): { from: number; to: nu
   }
 }
 
-/** 窗口内的消耗流水（按相邻快照差分累加） */
+/** 窗口内的消耗流水（统一来自逐日账目） */
 interface Flows {
   byUnit: Map<string, number>
   byPlatform: Map<string, number>
@@ -677,7 +671,8 @@ interface Flows {
   byDay: Map<string, number>
   hours: Map<string, number[]>
   recharges: { ts: number; name: string; amount: number; unit: string }[]
-  daysWithUse: Set<string>
+  /** 单位 → 日期标签 → 该单位当日消耗（byDay 是全单位混算的合计；分单位的活跃天与「消耗最多的一天」从这里取） */
+  dayValue: Map<string, Map<string, number>>
 }
 
 function emptyFlows(): Flows {
@@ -688,13 +683,8 @@ function emptyFlows(): Flows {
     byDay: new Map(),
     hours: new Map(),
     recharges: [],
-    daysWithUse: new Set()
+    dayValue: new Map()
   }
-}
-
-function dayLabel(ts: number): string {
-  const d = new Date(ts)
-  return String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
 }
 
 /**
@@ -750,18 +740,6 @@ function balanceLedger(list: Snapshot[], slices: DaySlice[], hasUsed: boolean, g
   }
 }
 
-/** 窗口内的消耗流水（统一来自逐日账目） */
-interface Flows {
-  byUnit: Map<string, number>
-  byPlatform: Map<string, number>
-  byAccount: Map<string, { name: string; unit: string; value: number }>
-  byDay: Map<string, number>
-  hours: Map<string, number[]>
-  recharges: { ts: number; name: string; amount: number; unit: string }[]
-  daysWithUse: Set<string>
-}
-
-
 /**
  * 把「逐日账目」归集到各维度（单位 / 平台 / 账号 / 日期 / 时段 / 充值）。
  *
@@ -803,7 +781,10 @@ function collectFlowsFromLedger(
       if (total <= 0) continue
       flows.byUnit.set(unit, (flows.byUnit.get(unit) ?? 0) + total)
       flows.byDay.set(day, (flows.byDay.get(day) ?? 0) + total)
-      flows.daysWithUse.add(day)
+      // 按单位记每天的消耗（分单位的活跃天数与峰值日都从这里取，避免混算串单位）
+      const unitDays = flows.dayValue.get(unit) ?? new Map<string, number>()
+      unitDays.set(day, (unitDays.get(day) ?? 0) + total)
+      flows.dayValue.set(unit, unitDays)
       if (withDetail) {
         const pk = type + '\u0000' + unit
         flows.byPlatform.set(pk, (flows.byPlatform.get(pk) ?? 0) + total)
@@ -928,9 +909,8 @@ export async function buildUsageReport(period: ReportPeriod = 'day'): Promise<Us
   const prevFlows = emptyFlows()
   collectFlowsFromLedger(okOnly, prevSlices, gapMs, prevFlows, false)
 
-  const round4v = (v: number): number => Math.round(v * 10000) / 10000
   const totalByUnit = Array.from(flows.byUnit.entries())
-    .map(([unit, value]) => ({ unit, value: round4v(value) }))
+    .map(([unit, value]) => ({ unit, value: round4(value) }))
     .sort((a, b) => b.value - a.value)
   const unit = totalByUnit.length > 0 ? totalByUnit[0].unit : ''
   const total = totalByUnit.length > 0 ? totalByUnit[0].value : 0
@@ -949,32 +929,24 @@ export async function buildUsageReport(period: ReportPeriod = 'day'): Promise<Us
     for (const [pk, value] of flows.byPlatform) {
       const [type, uu] = pk.split('\u0000')
       if (uu !== u.unit) continue
-      share.push({ type, value: round4v(value), pct: uTotal > 0 ? (value / uTotal) * 100 : 0 })
+      share.push({ type, value: round4(value), pct: uTotal > 0 ? (value / uTotal) * 100 : 0 })
     }
     share.sort((a, b) => b.value - a.value)
     let topAcc: UsageReportUnit['topAccount'] = null
     for (const [, v] of flows.byAccount) {
       if (v.unit !== u.unit) continue
-      if (!topAcc || v.value > topAcc.value) topAcc = { name: v.name, value: round4v(v.value), unit: v.unit }
+      if (!topAcc || v.value > topAcc.value) topAcc = { name: v.name, value: round4(v.value), unit: v.unit }
     }
+    // 消耗最多的一天：只看该单位自己的逐日消耗（byDay 是混算合计，直接用会串单位）
+    const unitDays = flows.dayValue.get(u.unit) ?? new Map<string, number>()
     let topD: UsageReportUnit['topDay'] = null
-    for (const [label, value] of flows.byDay) {
+    for (const [label, value] of unitDays) {
       if (value <= 0) continue
-      if (!topD || value > topD.value) topD = { label, value: round4v(value), unit: u.unit }
+      if (!topD || value > topD.value) topD = { label, value: round4(value), unit: u.unit }
     }
     const hours = flows.hours.get(u.unit) ?? new Array(24).fill(0)
-    const activeDays = (() => {
-      // 该单位有消耗的天数（各账号当天值相加）
-      const perDay = new Map<string, number>()
-      for (const [pk, value] of flows.byPlatform) {
-        const [, uu] = pk.split('\u0000')
-        if (uu !== u.unit) continue
-        perDay.set(u.unit, (perDay.get(u.unit) ?? 0) + value)
-      }
-      let n = 0
-      for (const [, v] of flows.byDay) if (v > 0) n++
-      return n
-    })()
+    // 该单位有消耗的天数（同样分单位统计）
+    const activeDays = unitDays.size
     const unitRecharges = flows.recharges.filter((r) => r.unit === u.unit)
     const prevU = prevFlows.byUnit.get(u.unit) ?? null
     return {
@@ -985,11 +957,11 @@ export async function buildUsageReport(period: ReportPeriod = 'day'): Promise<Us
       platformShare: share,
       topAccount: topAcc,
       topDay: topD,
-      activeHours: hours.map((value, hour) => ({ hour, value: round4v(value) })),
+      activeHours: hours.map((value, hour) => ({ hour, value: round4(value) })),
       recharges: unitRecharges,
       activeDays,
       totalDays,
-      avgDaily: uTotal > 0 ? round4v(uTotal / totalDays) : null
+      avgDaily: uTotal > 0 ? round4(uTotal / totalDays) : null
     }
   })
 

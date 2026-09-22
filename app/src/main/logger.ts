@@ -17,7 +17,7 @@ const MAX_BUFFER = 3000
 const MAX_FILE_BYTES = 2 * 1024 * 1024
 const KEEP_FILES = 8
 
-export interface LogEntry {
+interface LogEntry {
   ts: number
   level: LogLevel
   text: string
@@ -33,7 +33,7 @@ export function getLogLevel(): LogLevel {
 }
 
 /** 脱敏：任何密钥/凭据都不应出现在日志里 */
-export function sanitize(input: string): string {
+function sanitize(input: string): string {
   let s = input
   s = s.replace(/sk-[A-Za-z0-9_-]{6,}/g, 'sk-***')
   s = s.replace(/(cookie|authorization|api[-_]?key|apikey|access[-_]?key|secret|token)(\s*[:=]\s*)([^\s,;'"]{6,})/gi, '$1$2***')
@@ -153,7 +153,7 @@ export function clearLogs(): void {
   } catch { /* 忽略 */ }
 }
 
-/** 导出：把当前缓冲 + 磁盘日志合并成一个文件，返回路径 */
+/** 导出：把内存缓冲（本次运行 + 启动时载入的历史尾部）写成一个文件并返回路径（不含磁盘上的全部历史日志） */
 export function exportLogs(): { ok: boolean; path?: string; error?: string } {
   try {
     fs.mkdirSync(LOG_DIR, { recursive: true })

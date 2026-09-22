@@ -1,9 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import type { AccountType, BalanceRow, KeyAuditItem, KeyRow } from '@shared/types'
-import { KEY_PRESETS, KEY_PRESET_OPTIONS, PROVIDER_META, credentialKind } from '@shared/constants'
+import { KEY_PRESETS, KEY_PRESET_OPTIONS, credentialKind } from '@shared/constants'
 import { fmtAgo, fmtNumber } from '@shared/format'
 import { bulkKeys, listKeys, removeVaultKey, revealKey, saveAccount, saveVaultKey } from '@renderer/api/ipc'
+import { dateStamp, providerLabel } from '@renderer/utils/text'
+import { downloadText } from '@renderer/utils/download'
+import { useFlash } from '@renderer/composables/useFlash'
+import { useClipboard } from '@renderer/composables/useClipboard'
+import { useConfirm } from '@renderer/composables/useConfirm'
 import BaseModal from './BaseModal.vue'
 import InfoTip from './InfoTip.vue'
 import SelectMenu from './SelectMenu.vue'
@@ -11,6 +16,10 @@ import MonitorPanel from './MonitorPanel.vue'
 
 const props = defineProps<{ rows: BalanceRow[] }>()
 const emit = defineEmits<{ (e: 'edit', id: string): void }>()
+
+const { msg, flash } = useFlash()
+const copy = useClipboard(flash)
+const { confirm, prompt } = useConfirm()
 
 const tab = ref<'keys' | 'monitor'>('keys')
 const loading = ref(false)
@@ -28,7 +37,6 @@ const showAllKinds = ref(false)
 const collapsed = ref<Set<string>>(new Set())
 /** 当前展开「复制」菜单的行 id */
 const openCopy = ref('')
-const msg = ref('')
 const showDeleted = ref(false)
 const showExport = ref(false)
 
@@ -84,7 +92,7 @@ const groups = computed(() => {
   for (const r of visible.value) {
     if (groupBy.value === 'platform') {
       const k = r.type
-      const label = (PROVIDER_META[r.type]?.label ?? r.type) as string
+      const label = providerLabel(r.type)
       if (!map.has(k)) map.set(k, { key: k, label, rows: [] })
       map.get(k)!.rows.push(r)
     } else {
@@ -102,11 +110,6 @@ const groupOptions = [
   { value: 'platform', label: '按平台分组' },
   { value: 'tag', label: '按分类分组' }
 ]
-
-function typeLabel(t: string): string {
-  const m = PROVIDER_META[t as keyof typeof PROVIDER_META]
-  return m?.label ?? t
-}
 
 function balanceText(r: KeyRow): string {
   const b = balanceMap.value.get(r.id)
@@ -127,15 +130,12 @@ function toggleGroup(k: string) {
   collapsed.value = s
 }
 
-function flash(text: string) {
-  msg.value = text
-  setTimeout(() => { if (msg.value === text) msg.value = '' }, 3000)
-}
-
 async function doBulk(action: 'enable' | 'disable' | 'delete' | 'restore' | 'purge' | 'tag', tagValue?: string) {
   const ids = Array.from(selected.value)
   if (ids.length === 0) return
-  if (action === 'purge' && !window.confirm('彻底删除 ' + ids.length + ' 个 Key？不可恢复。')) return
+  if (action === 'purge' && !(await confirm('彻底删除 ' + ids.length + ' 个 Key？不可恢复。', { title: '彻底删除', danger: true }))) return
+  // 批量移入回收站同样要确认：影响面比单个删除更大（此前直接执行，容易误触批量删）
+  if (action === 'delete' && !(await confirm('把选中的 ' + ids.length + ' 个 Key 移入回收站？可随时恢复。', { title: '移入回收站' }))) return
   const r = await bulkKeys(ids, action, tagValue ? [tagValue] : undefined)
   if (r.ok) {
     flash('已处理 ' + r.data.affected + ' 个 Key')
@@ -144,35 +144,37 @@ async function doBulk(action: 'enable' | 'disable' | 'delete' | 'restore' | 'pur
   } else flash('操作失败：' + r.error)
 }
 
-function setCategory() {
-  const v = window.prompt('设置所属分类（可输入新分类名，逗号分隔多个；留空则清空分类）：', filterTag.value || '')
+async function setCategory() {
+  const v = await prompt('设置所属分类（可输入新分类名，逗号分隔多个；留空则清空分类）：', filterTag.value || '')
   if (v === null) return
   const list = v.split(',').map((x) => x.trim()).filter(Boolean)
   void doBulk('tag', list.join(','))
 }
 
-function renameCategory(oldName: string) {
-  const v = window.prompt('把分类「' + oldName + '」重命名为：', oldName)
+async function renameCategory(oldName: string): Promise<void> {
+  const v = await prompt('把分类「' + oldName + '」重命名为：', oldName)
   if (v === null || !v.trim() || v.trim() === oldName) return
   const ids = keyRows.value.filter((r) => r.tags.includes(oldName)).map((r) => r.id)
   const next = v.trim()
-  void (async () => {
-    for (const id of ids) {
-      const row = all.value.find((r) => r.id === id)
-      if (!row) continue
-      const tags2 = row.tags.map((t) => (t === oldName ? next : t))
-      await saveAccount({ id, enabled: true, name: row.name, type: row.type as AccountType, tags: tags2 })
-    }
-    flash('分类已重命名')
-    await load()
-  })()
+  // 逐条保存并检查结果：单条失败不再谎报「已重命名」
+  let failed = 0
+  for (const id of ids) {
+    const row = all.value.find((r) => r.id === id)
+    if (!row) continue
+    const tags2 = row.tags.map((t) => (t === oldName ? next : t))
+    const r = await saveAccount({ id, enabled: true, name: row.name, type: row.type as AccountType, tags: tags2 })
+    if (!r.ok) failed++
+  }
+  flash(failed === 0 ? '分类已重命名' : `重命名完成，但有 ${failed} 条保存失败`)
+  await load()
 }
 
 async function copySecret(r: KeyRow) {
+  // 明文密钥复制前二次确认（与编辑框「显示明文」的确认口径一致）
+  if (!(await confirm('复制「' + r.name + '」的密钥明文到剪贴板？明文可被直接使用并产生费用。', { title: '复制明文密钥', danger: true }))) return
   const res = await revealKey(r.id, r.source)
   if (!res.ok || !res.data) { flash('读取密钥失败'); return }
-  await navigator.clipboard.writeText(res.data)
-  flash('已复制「' + r.name + '」的密钥')
+  await copy(res.data, '已复制「' + r.name + '」的密钥')
 }
 
 function apiBase(r: KeyRow): string {
@@ -190,6 +192,8 @@ function envName(r: KeyRow): string {
 }
 
 async function copyAs(r: KeyRow, fmt: 'env' | 'json' | 'curl') {
+  // 这三种格式都携带密钥明文，同样二次确认
+  if (!(await confirm('复制内容将包含「' + r.name + '」的密钥明文，继续？', { title: '复制明文内容', danger: true }))) return
   const res = await revealKey(r.id, r.source)
   if (!res.ok || !res.data) { flash('读取密钥失败'); return }
   const secret = res.data
@@ -199,8 +203,7 @@ async function copyAs(r: KeyRow, fmt: 'env' | 'json' | 'curl') {
       : fmt === 'json'
         ? JSON.stringify({ name: r.name, type: r.type, category: r.tags, apiKey: secret, baseUrl: apiBase(r) }, null, 2)
         : curlExample(r, secret)
-  await navigator.clipboard.writeText(text)
-  flash('已复制为 ' + fmt.toUpperCase() + ' 格式')
+  await copy(text, '已复制为 ' + fmt.toUpperCase() + ' 格式')
 }
 
 async function cloneKey(r: KeyRow) {
@@ -220,14 +223,16 @@ async function cloneKey(r: KeyRow) {
 
 async function removeKey(r: KeyRow) {
   if (r.source === 'vault') {
-    if (!window.confirm('从 Key 库删除「' + r.name + '」？')) return
+    if (!(await confirm('从 Key 库删除「' + r.name + '」？', { title: '删除 Key', danger: true }))) return
     const res = await removeVaultKey(r.id)
-    if (res.ok) { flash('已从 Key 库删除'); await load() }
+    if (res.ok && res.data.ok) { flash('已从 Key 库删除'); await load() }
+    else flash('删除失败：' + (res.ok ? '主进程返回失败' : res.error))
     return
   }
-  if (!window.confirm('把账号「' + r.name + '」移入回收站？可随时恢复。')) return
+  if (!(await confirm('把账号「' + r.name + '」移入回收站？可随时恢复。', { title: '移入回收站' }))) return
   const res = await bulkKeys([r.id], 'delete')
   if (res.ok) { flash('已移入回收站'); await load() }
+  else flash('移入回收站失败：' + res.error)
 }
 
 function openAdd() {
@@ -270,7 +275,7 @@ async function buildShare(): Promise<string> {
       const res = await revealKey(r.id, r.source)
       secret = res.ok ? res.data : ''
     }
-    items.push({ name: r.name, type: typeLabel(r.type), tags: r.tags.join('/'), mask: r.secretMasked, balance: balanceText(r), secret })
+    items.push({ name: r.name, type: providerLabel(r.type), tags: r.tags.join('/'), mask: r.secretMasked, balance: balanceText(r), secret })
   }
   if (shareFormat.value === 'json') {
     return JSON.stringify({ exportedAt: new Date().toISOString(), containsSecret: withSecret, keys: items }, null, 2)
@@ -283,15 +288,14 @@ async function buildShare(): Promise<string> {
 async function doShare() { shareResult.value = await buildShare() }
 async function copyShare() {
   if (!shareResult.value) await doShare()
-  await navigator.clipboard.writeText(shareResult.value)
-  flash('已复制到剪贴板')
+  await copy(shareResult.value, '已复制到剪贴板')
 }
 function downloadShare() {
-  const blob = new Blob([shareResult.value], { type: shareFormat.value === 'json' ? 'application/json' : 'text/markdown' })
-  const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob)
-  a.download = 'api-keys-' + new Date().toISOString().slice(0, 10) + (shareFormat.value === 'json' ? '.json' : '.md')
-  document.body.appendChild(a); a.click(); document.body.removeChild(a)
+  downloadText(
+    'api-keys-' + dateStamp() + (shareFormat.value === 'json' ? '.json' : '.md'),
+    shareResult.value,
+    shareFormat.value === 'json' ? 'application/json' : 'text/markdown'
+  )
   flash('已导出文件')
 }
 function auditFor(id: string): KeyAuditItem[] { return audit.value.filter((a) => a.id === id) }
@@ -388,7 +392,7 @@ function auditFor(id: string): KeyAuditItem[] { return audit.value.filter((a) =>
               <tr v-for="r in g.rows" :key="r.id" :class="{ off: !r.enabled }">
                 <td class="ck"><input type="checkbox" :checked="selected.has(r.id)" @change="toggleSel(r.id)" /></td>
                 <td class="tl"><span class="kname">{{ r.name }}</span><span v-for="(a, i) in auditFor(r.id).slice(0, 1)" :key="i" class="kflag" :title="a.message">!</span></td>
-                <td class="tl">{{ typeLabel(r.type) }}</td>
+                <td class="tl">{{ providerLabel(r.type) }}</td>
                 <td class="tl"><span class="src" :class="r.source">{{ r.source === 'account' ? '账号' : 'Key 库' }}</span></td>
                 <td class="tl"><span v-for="t in r.tags" :key="t" class="ktag">{{ t }}</span><span v-if="!r.tags.length" class="muted">—</span></td>
                 <td class="tl mono">{{ r.secretMasked || '未设置' }}</td>
@@ -454,7 +458,7 @@ function auditFor(id: string): KeyAuditItem[] { return audit.value.filter((a) =>
         <div v-if="showDeleted && deleted.length" class="rec-list">
           <div v-for="r in deleted" :key="r.id" class="rec-item">
             <span class="kname">{{ r.name }}</span>
-            <span class="muted">{{ typeLabel(r.type) }} · 删除于 {{ r.deletedAt ? fmtAgo(r.deletedAt) : '—' }}</span>
+            <span class="muted">{{ providerLabel(r.type) }} · 删除于 {{ r.deletedAt ? fmtAgo(r.deletedAt) : '—' }}</span>
             <span class="rec-ops">
               <button class="btn ghost tiny" type="button" @click="selected = new Set([r.id]); doBulk('restore')">恢复</button>
               <button class="btn ghost tiny danger" type="button" @click="selected = new Set([r.id]); doBulk('purge')">彻底删除</button>
@@ -520,8 +524,6 @@ function auditFor(id: string): KeyAuditItem[] { return audit.value.filter((a) =>
 .filters .input { min-width: 200px; }
 .input.mini { width: 140px; }
 .kinds { font-size: 12px; color: var(--tx3); display: inline-flex; align-items: center; gap: 5px; }
-.seg.small { padding: 2px; }
-.seg.small button { padding: 4px 10px; font-size: 12px; }
 .bulkbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 12px; margin-bottom: 10px; border-radius: 10px; background: var(--acc-soft); font-size: 12.5px; color: var(--tx); }
 .group { margin-bottom: 14px; }
 .group-head { display: flex; align-items: center; gap: 10px; }
@@ -532,7 +534,7 @@ function auditFor(id: string): KeyAuditItem[] { return audit.value.filter((a) =>
 .table-wrap { background: var(--card); border: none; border-radius: 14px; overflow: auto; box-shadow: inset 0 0 0 1px var(--line), var(--shadow-sm); }
 .usage-table { border-collapse: collapse; width: 100%; font-size: var(--fs-sub); table-layout: fixed; }
 .usage-table th:not(.ck), .usage-table td:not(.ck):not(.ops) { overflow: hidden; text-overflow: ellipsis; }
-.usage-table .ck { overflow: visible; text-align: center; padding: 8px 6px; }
+.usage-table .ck { overflow: visible; text-align: center; padding: 8px 6px; width: 34px; }
 .usage-table .ops { overflow: visible; }
 /* 行悬停高亮（保持在单元格之上） */
 .usage-table tbody tr:hover td { background: var(--card-hover) !important; }
@@ -547,7 +549,6 @@ function auditFor(id: string): KeyAuditItem[] { return audit.value.filter((a) =>
 .usage-table th.tl, .usage-table td.tl { text-align: left; }
 .usage-table tbody tr:hover td { background: var(--card-hover); }
 .usage-table tr.off td { opacity: 0.55; }
-.usage-table .ck { width: 34px; text-align: center; }
 .kname { font-weight: 600; color: var(--tx); }
 .kflag { display: inline-block; margin-left: 6px; width: 15px; height: 15px; line-height: 15px; text-align: center; border-radius: 50%; background: var(--warn-soft); color: var(--warn); font-size: 11px; font-weight: 700; cursor: help; }
 .src { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; background: var(--panel2); color: var(--tx3); }

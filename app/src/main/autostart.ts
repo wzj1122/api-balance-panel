@@ -18,7 +18,7 @@ import { logger } from './logger'
  */
 
 /** 登录项 / 注册表里使用的名字：必须与 package.json 的 productName 一致 */
-export const AUTOSTART_NAME = 'API 余额面板'
+const AUTOSTART_NAME = 'API 余额面板'
 
 /** Run 键（当前用户，不需要管理员权限） */
 const RUN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run'
@@ -61,13 +61,13 @@ function runReg(args: string[]): { ok: boolean; out: string } {
  * 启动命令行（就是写进 Run 键的值）。
  * 路径含空格必须加引号，否则系统解析时会把路径截断。
  */
-export function loginCommand(): string {
+function loginCommand(): string {
   const exe = process.execPath
   return `"${exe}" --open-at-login`
 }
 
 /** 从 Run 键的值里解析出可执行文件路径（去掉引号，忽略后面的参数） */
-export function parseExecutable(command: string): string {
+function parseExecutable(command: string): string {
   const s = (command || '').trim()
   if (!s) return ''
   if (s.startsWith('"')) {
@@ -80,7 +80,7 @@ export function parseExecutable(command: string): string {
 }
 
 /** 读 Run 键里的本程序启动项（没有返回 ''） */
-export function readRunValue(name: string = AUTOSTART_NAME): string {
+function readRunValue(name: string = AUTOSTART_NAME): string {
   const r = runReg(['query', RUN_KEY, '/v', name])
   if (!r.ok) return ''
   const m = /REG_SZ\s+(.+)/i.exec(r.out)

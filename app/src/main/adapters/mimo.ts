@@ -3,7 +3,7 @@ import type { BalanceItem } from '../../shared/types'
 import { AdapterError, mapHttpStatus } from '../errors'
 import { request } from '../http'
 import type { Adapter } from './types'
-import { dig, num, okResult, safeJson } from './util'
+import { assertNotExpired, dig, num, okResult, safeJson } from './util'
 
 /**
  * 小米 MiMo 余额（Cookie）。
@@ -22,10 +22,8 @@ export const mimoAdapter: Adapter = async (account, ctx) => {
 
   // 现金余额：必须成功，否则整个账号算失败
   const r1 = await request(MIMO_BALANCE_URL, { headers })
-  if (r1.status === 401 || r1.status === 403) {
-    // 说人话：以前这里只写 "401"，用户看不出"要去点登录"（自动续期失败时尤其重要）
-    throw new AdapterError('COOKIE_EXPIRED', '登录已失效（' + r1.status + '），请点「登录 MiMo」重新登录一次')
-  }
+  // 说人话的过期判定（自动续期失败时尤其重要）：401/403 → COOKIE_EXPIRED + 重新登录指引
+  assertNotExpired(r1, '请点「登录 MiMo」重新登录一次')
   if (r1.status !== 200) throw new AdapterError(mapHttpStatus(r1.status), r1.text.slice(0, 160))
 
   const d = (dig(safeJson(r1.text, MIMO_BALANCE_URL), 'data') as Record<string, unknown>) ?? {}

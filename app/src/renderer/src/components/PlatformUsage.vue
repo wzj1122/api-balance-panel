@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import type { PlatformUsageReport, Settings } from '@shared/types'
-import { PROVIDER_META } from '@shared/constants'
 import { fmtNumber, fmtMoney } from '@shared/format'
 import { creditCny, compareWeight, hasCreditRate, isCreditUnit, rateText } from '@shared/cost'
 import { getFx, listPlatformUsage } from '@renderer/api/ipc'
 import { downloadCsv, todayStamp } from '@renderer/utils/csv'
+import { providerLabel } from '@renderer/utils/text'
+import InfoTip from './InfoTip.vue'
 
 /**
  * 「折合人民币」只对**积分型**单位（商汤这类）显示。
@@ -61,11 +62,6 @@ const hasData = computed(() => {
   const r = report.value
   return !!r && r.days.length > 0 && r.platforms.length > 0
 })
-
-function typeLabel(t: string): string {
-  const m = PROVIDER_META[t as keyof typeof PROVIDER_META]
-  return m?.label ?? t
-}
 
 /** 折合人民币（估算）：**只有积分型单位**才有值，其它单位返回 null（界面显示空） */
 function toCny(value: number | null | undefined, unit: string): number | null {
@@ -150,7 +146,7 @@ function exportCsv() {
   // 与界面同序（按折算值），导出的表也一眼看出谁更贵
   for (const { p } of platformBars.value) {
     rows.push([
-      typeLabel(p.type),
+      providerLabel(p.type),
       p.type,
       p.unit,
       p.today ?? '',
@@ -224,7 +220,7 @@ function exportCsv() {
           <div class="chip">
             <div class="chip-label">消耗最多平台（按折算值）</div>
             <div class="chip-value" v-if="topPlatform">
-              <span class="strong">{{ typeLabel(topPlatform.p.type) }}</span>
+              <span class="strong">{{ providerLabel(topPlatform.p.type) }}</span>
               <span class="chip-sub num">{{ fmtNumber(topPlatform.p.total) }} {{ topPlatform.p.unit }}</span>
               <span class="chip-sub num" v-if="cnyText(topPlatform.p.total, topPlatform.p.unit)">{{ cnyText(topPlatform.p.total, topPlatform.p.unit) }}</span>
             </div>
@@ -266,7 +262,7 @@ function exportCsv() {
           <div class="bars-title">平台消耗对比（近 {{ range }} 天）</div>
           <div class="bar-row" v-for="b in platformBars" :key="b.p.type + b.p.unit">
             <div class="bar-info">
-              <span class="bar-name">{{ typeLabel(b.p.type) }}</span>
+              <span class="bar-name">{{ providerLabel(b.p.type) }}</span>
               <span class="bar-type-muted">{{ b.p.type }}</span>
             </div>
             <div class="bar-track">
@@ -295,7 +291,7 @@ function exportCsv() {
             </thead>
             <tbody>
               <tr v-for="p in report.platforms" :key="p.type + p.unit">
-                <td class="tl"><span class="acc-name">{{ typeLabel(p.type) }}</span><span class="muted">{{ p.type }}</span></td>
+                <td class="tl"><span class="acc-name">{{ providerLabel(p.type) }}</span><span class="muted">{{ p.type }}</span></td>
                 <td class="muted">{{ p.unit || '—' }}</td>
                 <td v-for="(v, i) in p.days" :key="i" class="num" :class="{ dim: v === null }">{{ v === null ? '—' : fmtNumber(v) }}</td>
                 <td class="num today">{{ p.today === null ? '—' : fmtNumber(p.today) }}</td>
@@ -343,9 +339,7 @@ function exportCsv() {
 .head { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; padding: 20px var(--pad-lg) 8px; }
 .head h2 { font-size: 19px; font-weight: 700; color: var(--tx-strong); margin: 0; }
 .tools { display: flex; align-items: center; gap: 8px; }
-.seg { display: inline-flex; gap: 4px; background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 3px; }
-.seg button { border: none; background: transparent; color: var(--tx2); font-size: var(--fs-sub); font-weight: 500; padding: 5px 12px; border-radius: 8px; cursor: pointer; transition: background var(--dur) ease, color var(--dur) ease; }
-.seg button.on { background: var(--card); color: var(--acc); font-weight: 600; box-shadow: var(--shadow-sm); }
+/* .seg / .gap-note 基础样式统一在 global.css */
 .scroll { flex: 1; overflow-y: auto; padding: 8px var(--pad-lg) 40px; }
 .chips { display: flex; flex-wrap: wrap; gap: var(--gap); margin: 10px 0 18px; }
 .chip { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px 18px; min-width: 150px; box-shadow: var(--shadow-sm); display: flex; flex-direction: column; gap: 4px; }
@@ -395,13 +389,6 @@ function exportCsv() {
 .usage-table tfoot td { border-bottom: none; background: var(--acc-soft); }
 /* 停机期间（软件未运行）消耗：跟其它数字一样普通显示，不做强调（用户要求：不需要突出显示） */
 .usage-table td.gap { font-variant-numeric: tabular-nums; }
-/* 停机期间说明：普通提示文字，不做底色/边框/变色强调 */
-.gap-note {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
-  margin: 0 0 14px; font-size: var(--fs-foot); color: var(--tx3);
-}
-.gap-ico { font-size: 13px; }
-.gap-val { color: var(--tx2); font-variant-numeric: tabular-nums; }
 .th-day.faint { color: transparent; }
 .acc-name { display: block; font-weight: 600; color: var(--tx); }
 .muted { color: var(--tx3); font-size: var(--fs-foot); }

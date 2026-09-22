@@ -196,7 +196,7 @@ const api: PanelApi = {
     return ipcRenderer.invoke(IPC.LOG_SET_LEVEL, { level })
   },
 
-  listBackgrounds(): Promise<{ files: { name: string; size: number }[] }> {
+  listBackgrounds(): Promise<{ files: { name: string; size: number; builtin: boolean }[] }> {
     return ipcRenderer.invoke(IPC.BG_LIST)
   },
 
@@ -282,6 +282,7 @@ if (process.contextIsolated) {
     console.error('[preload] contextBridge 暴露失败：', error)
   }
 } else {
-  // 理论上不会走到（window.ts 强制 contextIsolation: true），留个兜底方便排查
-  ;(globalThis as unknown as { api: PanelApi }).api = api
+  // 理论上不会走到（window.ts 强制 contextIsolation: true）。
+  // 真走到了说明隔离被误关：直接抛错中止加载，而不是静默降级、悄悄失去隔离。
+  throw new Error('[preload] contextIsolation 未启用：拒绝在无隔离环境下暴露 API（请检查 window.ts 的 webPreferences）')
 }

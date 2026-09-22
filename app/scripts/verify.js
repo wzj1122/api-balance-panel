@@ -1,6 +1,6 @@
 /* eslint-disable */
 /**
- * T02 数据层实测脚本（临时，不在主流程里，跑完可删）。
+ * 数据层正式回归脚本（长期保留，非临时脚本）：配置读写 / 加密落盘 / 损坏回滚归档 / 归一化兜底的回归验证。
  *
  * 运行方式（必须用 electron 当 node 运行时，因为要用 safeStorage）：
  *   npx tsc -p scripts/tsconfig.verify.json

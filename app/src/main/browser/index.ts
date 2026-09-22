@@ -1,6 +1,5 @@
 import { BrowserWindow, session, type Session } from 'electron'
 import {
-  MINIMAX_ACCOUNT_URL,
   MINIMAX_BACKEND,
   MINIMAX_BACKEND_CN,
   SENSENOVA_POOL_USAGE_URL
@@ -18,19 +17,12 @@ import { logger } from '../logger'
  * - 不存账号密码：只抓登录后的 Cookie（加密存进账号的 secret 字段），过期后界面提示重新登录。
  */
 
-export interface LoginResult {
+interface LoginResult {
   ok: boolean
   cookie?: string
   error?: string
   /** 续期材料（会话 Cookie 串等）；登录成功且配置了 collectSession 时才有 */
   session?: CredentialSession | null
-}
-
-export interface LoginSuccessRule {
-  /** 命中这些 host 说明已进入登录后的页面（开始校验，通过即自动关闭窗口） */
-  hosts: string[]
-  /** 可选：路径前缀也要匹配（如 /console/，避免在登录中间页就触发） */
-  pathPrefix?: string
 }
 
 export interface LoginOptions {
@@ -50,8 +42,6 @@ export interface LoginOptions {
   extraUrls?: string[]
   /** 抓完 Cookie 后立即校验：返回 null = 通过；返回字符串 = 失败原因 */
   validate?: (cookie: string) => Promise<string | null>
-  /** 自动关闭规则：窗口进入这些地址后开始轮询校验，通过就自动关窗 */
-  success?: LoginSuccessRule
   /** 登录态存在 localStorage 里的键名（商汤等平台：额度接口只认 Bearer token，Cookie 无效） */
   tokenKey?: string
   /** 抓完 token 后立即校验（与 validate 二选一，tokenKey 存在时用它） */
@@ -339,16 +329,6 @@ export function loginToSite(opts: LoginOptions): Promise<LoginResult> {
      */
     const HARD_DEADLINE_MS = 10 * 60 * 1000
 
-    /**
-     * 处理收尾：手上有凭据且校验 + 落盘复验都通过 → 直接落定结果（不需要用户做任何事）。
-     *
-     * 注意「只认新凭据」这条纪律：走到这里的凭据要么是开窗前就验过可用的会话，
-     * 要么是"打开窗口后清空了旧凭据、用户重新登录出来的"新凭据——不会再把
-     * 分区里残留的旧会话当成"用户刚登录成功"（那正是"还没登录窗口就自己关了"的原因）。
-     */
-    let initialCredential = ''
-    let preflightDone = false
-
     const closeWin = () => {
       try { win.close() } catch { /* 已关闭 */ }
     }
@@ -369,7 +349,7 @@ export function loginToSite(opts: LoginOptions): Promise<LoginResult> {
 
     // 轮询：出现"新的可用凭据"或用户关窗时收尾
     const poll = async () => {
-      // 注意：不再要求必须有 success 规则——平台只要能用「真实接口校验」就能自动关窗
+      // 凭据能通过「真实接口校验」就自动关窗，不看窗口停在哪个页面
       if (settled || autoClosing) return
       // 硬超时兜底：宁可明确失败，也不要让界面永久停在"等待登录"
       if (Date.now() - startedAt > HARD_DEADLINE_MS) {
@@ -385,10 +365,9 @@ export function loginToSite(opts: LoginOptions): Promise<LoginResult> {
       }
       let u = ''
       try { u = win.webContents.getURL() } catch { return }
-      let parsed: URL | null = null
-      try { parsed = new URL(u) } catch { return }
       // 不再限制窗口停留在哪个域名/路径：登录流程常在小米账号页、验证页之间跳转，
       // 只要会话里出现可用凭据（validate 会用真实接口验证）就关窗。
+      if (!u) return
       if (Date.now() - startedAt < 1500) return
       autoClosing = true
       matchedAt = Date.now()
@@ -396,10 +375,8 @@ export function loginToSite(opts: LoginOptions): Promise<LoginResult> {
       while (!settled) {
         try {
           const { value, error } = await grabCredential()
-          // 关键：必须是与打开窗口时**不同的新凭据**，否则会把"分区里的旧会话"当成
-          // "用户刚登录成功"，导致用户还没登录窗口就自动关了（本次实测的 Bug）。
-          const isNew = Boolean(value) && value !== initialCredential
-          if (value && error === null && isNew) {
+          // 只认开窗后拿到的非空凭据（开窗前已清空分区旧凭据，见 openWith，不会把旧会话当成"刚登录成功"）
+          if (value && error === null) {
             // 落盘复验（见 verifyCredential 注释）：只有真能查到数才算成功
             if (await settleWith(value, '登录完成，已获取新凭据')) return
           }
@@ -556,7 +533,7 @@ export function loginToSite(opts: LoginOptions): Promise<LoginResult> {
      * 起飞前检查（**在开窗口之前**）：
      *
      * 0. 浏览器进程里已经有一份可用会话（分区 Cookie）→ 用户不用做任何事，直接用，**不开窗口**；
-     * 1. 都不行才开窗口，并且只认「用户登录后出现的新凭据」（见 initialCredential）。
+     * 1. 都不行才开窗口，并且只认「用户登录后出现的新凭据」（开窗前先清空分区旧凭据）。
      *
      * 第 0 步是本次实测后加的：以前无论如何都会开窗口，然后第一个轮询就把分区里的旧会话
      * 当成"登录成功"把窗口关掉 —— 用户看到的就是"我刚点开浏览器，还没登录它自己就关了，
@@ -601,7 +578,6 @@ export function loginToSite(opts: LoginOptions): Promise<LoginResult> {
   })
 }
 
-/** Cookie 里出现某名字即视为登录成功（mimo / 智谱的会话标识） */
 /**
  * 通用校验：拿 Cookie 真实请求一次业务接口，能通才算登录成功。
  * 好处是完全不依赖 Cookie 名字与登录后跳转路径——平台改名/改版都不受影响。
