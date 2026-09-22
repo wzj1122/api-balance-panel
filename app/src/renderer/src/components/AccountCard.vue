@@ -14,6 +14,8 @@ const props = defineProps<{
   forecast?: DailyAccount | null
   /** 该账号是否正在静默续期 */
   renewing?: boolean
+  /** 该账号是否正在重新登录（卡片按钮） */
+  relogging?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -22,6 +24,8 @@ const emit = defineEmits<{
   (e: 'remove', id: string): void
   /** 静默续期登录（用保存的会话换新凭据） */
   (e: 'renew', id: string): void
+  /** 一键重新登录（需要输密码那种，卡片上直接开登录窗口） */
+  (e: 'relogin', id: string): void
   /** 跳到「数据校正」页（带该账号） */
   (e: 'correct', id: string): void
 }>()
@@ -29,7 +33,15 @@ const emit = defineEmits<{
 /** 卡片备注里带「已手动校正」时给个小标记（点了直接去校正页） */
 const adjusted = computed(() => /已手动校正/.test(props.row.note ?? ''))
 
-/** 支持静默续期的平台（登录型）：商汤 / 小米 MiMo */
+/**
+ * 登录型平台：会话会过期、需要重新登录。
+ * 除了商汤 / 小米 MiMo，硅基流动 / MiniMax / 智谱也是"登录抓凭据"型，
+ * 所以卡片上都给「重新登录」按钮（用户 2026-09-22 要求：基本上所有模型都可能要重登）。
+ */
+const LOGIN_TYPES = new Set<AccountType>(['sensenova', 'mimo', 'mimo-plan', 'siliconflow', 'minimax', 'zhipu'])
+const canRelogin = computed(() => LOGIN_TYPES.has(props.row.type))
+
+/** 支持"静默续期"的平台（子集：只有这两个平台有会话保活链路） */
 const RENEWABLE = new Set<AccountType>(['sensenova', 'mimo', 'mimo-plan'])
 const canRenew = computed(() => RENEWABLE.has(props.row.type))
 
@@ -39,6 +51,14 @@ const renewTitle = computed(() =>
   renewing.value
     ? '正在静默续期…'
     : '续期登录（用已有会话自动换新凭据，不需要重新输密码）'
+)
+
+/** 重新登录按钮状态 */
+const relogging = computed(() => props.relogging === true)
+const reloginTitle = computed(() =>
+  relogging.value
+    ? '正在等待你在登录窗口里完成登录…'
+    : '重新登录（打开这个平台的登录页，登录完成后自动保存并刷新）'
 )
 
 /** 平台品牌色映射（驱动卡片点缀色） */
@@ -305,6 +325,23 @@ async function toggleTrend(): Promise<void> {
             />
           </svg>
         </button>
+        <button
+          v-if="canRelogin"
+          class="icon-btn"
+          :class="{ 'relogin-busy': relogging }"
+          type="button"
+          :title="reloginTitle"
+          :disabled="relogging"
+          @click="emit('relogin', row.accountId)"
+        >
+          <!-- 用"钥匙"图标和旁边那个"刷新箭头"区分开，避免用户点错 -->
+          <svg class="ico" :class="{ spin: relogging }" viewBox="0 0 16 16" width="14" height="14">
+            <path
+              fill="currentColor"
+              d="M10.5 1a4.5 4.5 0 0 0-4.35 3.4L1.5 9.05A1 1 0 0 0 1.2 9.7v3.1c0 .44.36.8.8.8h3.1a1 1 0 0 0 .7-.29l1.2-1.2h1.3a.8.8 0 0 0 .8-.8v-1.3l.85-.85A4.5 4.5 0 1 0 10.5 1Zm1.6 3.9a1.2 1.2 0 1 1 0-2.4 1.2 1.2 0 0 1 0 2.4Z"
+            />
+          </svg>
+        </button>
         <button class="icon-btn" type="button" title="编辑" @click="emit('edit', row.accountId)">
           <svg class="ico" viewBox="0 0 16 16" width="14" height="14">
             <path
@@ -505,7 +542,7 @@ async function toggleTrend(): Promise<void> {
 .ops {
   margin-left: auto;
   display: flex;
-  gap: 3px;
+  gap: 2px;
   flex: none;
 }
 
@@ -520,6 +557,12 @@ async function toggleTrend(): Promise<void> {
   align-items: center;
   justify-content: center;
   transition: background 0.14s ease, color 0.14s ease;
+}
+
+/* 正在「重新登录」时给个视觉提示（等用户在登录窗口里操作，可能要好一会儿） */
+.icon-btn.relogin-busy {
+  color: var(--acc);
+  background: var(--acc-soft);
 }
 
 .icon-btn:hover:not(:disabled) {

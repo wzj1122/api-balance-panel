@@ -79,6 +79,11 @@ const api: PanelApi = {
     return ipcRenderer.invoke(IPC.ACCOUNT_RENEW, { id })
   },
 
+  /** 一键重新登录（卡片按钮）：按账号类型打开登录窗口，成功后自动写回账号 */
+  reloginAccount(id: string): Promise<{ ok: boolean; cookie?: string; error?: string; canRenew?: boolean; renewHint?: string }> {
+    return ipcRenderer.invoke(IPC.ACCOUNT_RELOGIN, { id })
+  },
+
   getFx(): Promise<FxInfo> {
     return ipcRenderer.invoke(IPC.FX_GET)
   },

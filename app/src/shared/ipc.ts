@@ -51,6 +51,8 @@ export const IPC = {
   ACCOUNT_LOGIN: 'account:login',
   /** invoke：静默续期登录（用保存的会话换新凭据，不弹窗、不需要密码） */
   ACCOUNT_RENEW: 'account:renew',
+  /** invoke：卡片上的一键重新登录（打开该平台的登录窗口，成功后自动写回账号） */
+  ACCOUNT_RELOGIN: 'account:relogin',
   /** invoke：读某账号的校正视图（账本 + 影响条数 + 快照对照） */
   CORRECTION_VIEW: 'correction:view',
   /** invoke：新增校正（改某天用量 / 平移 / 回退到某次快照） */
@@ -163,6 +165,9 @@ export interface PanelApi {
 
   /** 静默续期登录：用保存的会话换新凭据（不弹窗、不需要密码）；失败说明会话已彻底失效 */
   renewAccount(id: string): Promise<{ ok: boolean; error: string; needLogin: boolean; expiresAt: number | null }>
+
+  /** 一键重新登录（卡片按钮）：按账号类型打开对应登录窗口，登录成功后自动写回并刷新 */
+  reloginAccount(id: string): Promise<{ ok: boolean; cookie?: string; error?: string; canRenew?: boolean; renewHint?: string }>
 
   /** 读某账号的校正视图（账本条目 + 每条影响的快照数 + 快照对照点） */
   correctionView(payload: { accountId: string; limit?: number }): Promise<CorrectionView>

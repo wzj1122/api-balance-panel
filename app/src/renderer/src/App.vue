@@ -19,7 +19,7 @@ import HelpPane from '@renderer/components/HelpPane.vue'
 import UsageReportView from '@renderer/components/UsageReportView.vue'
 import BudgetBar from '@renderer/components/BudgetBar.vue'
 import OnboardingGuide from '@renderer/components/OnboardingGuide.vue'
-import { backgroundData, backgroundForTheme, listDailyUsage, renewAccount, setDemoMode } from '@renderer/api/ipc'
+import { backgroundData, backgroundForTheme, listDailyUsage, reloginAccount, renewAccount, setDemoMode } from '@renderer/api/ipc'
 import { resolveTheme } from '@renderer/utils/theme'
 
 const {
@@ -53,7 +53,9 @@ const demoOn = ref(false)
 const showOnboard = ref(false)
 /** 正在静默续期的账号 id 集合（卡片按钮态） */
 const renewingIds = ref<Set<string>>(new Set())
-/** 续期结果提示（顶部小字，几秒后自动消失） */
+/** 正在「重新登录」的账号 id 集合（卡片按钮态） */
+const reloggingIds = ref<Set<string>>(new Set())
+/** 续期 / 重新登录的结果提示（顶部小字，几秒后自动消失） */
 const renewMsg = ref('')
 /** 跳到「数据校正」页时预选的账号 */
 const correctionAccountId = ref('')
@@ -62,6 +64,37 @@ const correctionAccountId = ref('')
 function openCorrection(accountId?: string): void {
   correctionAccountId.value = accountId ?? ''
   view.value = 'correction'
+}
+
+/**
+ * 卡片上的一键「重新登录」：打开该平台的登录窗口 → 登录成功自动写回账号 → 立即刷新卡片。
+ *
+ * 为什么要它（用户 2026-09-22 要求）：有些平台的会话是**绝对到期、无法续期**的
+ * （商汤实测 3 小时），到期后必然要重新登录；以前得「点编辑 → 点登录 → 再点保存」，
+ * 现在卡片上点一下就行。所有登录型平台（小米 MiMo / 套餐 / 硅基流动 / MiniMax / 智谱 / 商汤）共用。
+ */
+async function onRelogin(id: string): Promise<void> {
+  const acc = accounts.value.find((a) => a.id === id)
+  const next = new Set(reloggingIds.value)
+  next.add(id)
+  reloggingIds.value = next
+  renewMsg.value = '已打开登录窗口：请在弹出的窗口里完成登录，成功后会自动保存并刷新'
+  try {
+    const r = await reloginAccount(id)
+    if (r.ok && r.data?.ok) {
+      const hint = r.data.renewHint ? '（' + r.data.renewHint + '）' : ''
+      renewMsg.value = (acc?.name ?? '账号') + ' 重新登录成功' + hint
+      await refreshOne(id)
+    } else {
+      const why = r.ok ? r.data?.error || '未获取到凭据' : r.error
+      renewMsg.value = '重新登录未完成：' + why
+    }
+  } finally {
+    const done = new Set(reloggingIds.value)
+    done.delete(id)
+    reloggingIds.value = done
+    setTimeout(() => { renewMsg.value = '' }, 8000)
+  }
 }
 
 /**
@@ -387,9 +420,11 @@ async function onSettingsSave(patch: Parameters<typeof saveSettings>[0]) {
                       :row="row"
                       :refreshing="refreshingIds.has(row.accountId)"
                       :renewing="renewingIds.has(row.accountId)"
+                      :relogging="reloggingIds.has(row.accountId)"
                       :forecast="forecastMap?.get(row.accountId) ?? null"
                       @refresh="refreshOne"
                       @renew="onRenew"
+                      @relogin="onRelogin"
                       @correct="openCorrection(row.accountId)"
                       @edit="openEdit"
                       @remove="onRemove"

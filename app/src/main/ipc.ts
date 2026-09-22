@@ -1,5 +1,5 @@
 import { app, ipcMain, Notification, session, shell } from 'electron'
-import { LOGIN_RULES, MIMO_BALANCE_URL, loginPartition } from '../shared/constants'
+import { LOGIN_RULES, MIMO_BALANCE_URL, MIMO_LOGIN_URL, MINIMAX_LOGIN_URL, SENSENOVA_CONSOLE_URL, SILICONFLOW_LOGIN_URL, ZHIPU_LOGIN_URL, loginPartition } from '../shared/constants'
 import { IPC } from '../shared/ipc'
 import type { RefreshPayload } from '../shared/ipc'
 import type { Account, AccountInput, AppInfo, Correction, CorrectionView, CredentialSession, MonitorInput, ReportPeriod, Settings, Snapshot, LogLevel, KeyVaultInput } from '../shared/types'
@@ -145,17 +145,18 @@ export function registerIpc(): void {
     return { ok: !err }
   })
 
-  // 打开内置浏览器登录站点，返回抓到的 Cookie（mimo 等需登录的平台）
-  wrap(IPC.ACCOUNT_LOGIN, async (payload) => {
-    const p = asRecord(payload) as unknown as {
-      url?: string
-      name?: string
-      platform?: string
-      extraUrls?: string[]
-      /** 已有账号 id（编辑时传）：登录成功后把「续期材料」直接存到该账号 */
-      accountId?: string
-    }
-    if (typeof p.url !== 'string' || !p.url) throw new Error('缺少登录地址')
+  /**
+   * 各平台的登录流程本体（打开登录窗口 → 抓凭据 → 校验 → 复验 → 落盘）。
+   * 两个入口共用：编辑框里的「登录并获取」（ACCOUNT_LOGIN）和卡片上的「重新登录」（ACCOUNT_RELOGIN），
+   * 保证两条路径的分区、校验、复验口径完全一致。
+   */
+  const runSiteLogin = async (p: {
+    url: string
+    name?: string
+    platform?: string
+    extraUrls?: string[]
+    accountId?: string
+  }): Promise<{ ok: boolean; cookie?: string; error?: string; canRenew?: boolean; renewHint?: string }> => {
     /**
      * 各平台的登录规则统一放在 shared/constants.ts 的 LOGIN_RULES（含**分区 host**）。
      * 之前规则内联在这里、分区名由登录页 hostname 推导，导致登录与静默续期落在两个分区里
@@ -288,6 +289,62 @@ export function registerIpc(): void {
       canRenew: Boolean(rule?.cookieUrls),
       renewHint
     }
+  }
+
+  /** 各「登录型」平台的登录页（卡片「重新登录」与编辑框共用同一张表） */
+  const LOGIN_URLS: Partial<Record<string, string>> = {
+    mimo: MIMO_LOGIN_URL,
+    'mimo-plan': MIMO_LOGIN_URL,
+    siliconflow: SILICONFLOW_LOGIN_URL,
+    minimax: MINIMAX_LOGIN_URL,
+    zhipu: ZHIPU_LOGIN_URL,
+    sensenova: SENSENOVA_CONSOLE_URL
+  }
+
+  // 编辑框里的「登录并获取」：登录页由界面给（也允许带 extraUrls）
+  wrap(IPC.ACCOUNT_LOGIN, async (payload) => {
+    const p = asRecord(payload) as unknown as {
+      url?: string
+      name?: string
+      platform?: string
+      extraUrls?: string[]
+      accountId?: string
+    }
+    if (typeof p.url !== 'string' || !p.url) throw new Error('缺少登录地址')
+    return runSiteLogin({
+      url: p.url,
+      name: p.name,
+      platform: p.platform,
+      extraUrls: p.extraUrls,
+      accountId: p.accountId
+    })
+  })
+
+  /**
+   * 卡片上的「重新登录」一键入口：账号已经配好了，只需重登一次。
+   *
+   * 为什么单独开一个通道（用户 2026-09-22 要求）：
+   * 以前续期失效后要「点编辑 → 点登录 → 再点保存」三步，入口还藏在表单里；
+   * 现在卡片上直接一个按钮，登录成功后凭据 + 续期材料自动写进该账号，界面紧接着刷新卡片。
+   * 所有「登录型」平台共用：小米 MiMo / MiMo 套餐 / 硅基流动 / MiniMax / 智谱 / 商汤日日新。
+   */
+  wrap(IPC.ACCOUNT_RELOGIN, async (payload) => {
+    const p = asRecord(payload) as { id?: string }
+    const id = typeof p.id === 'string' ? p.id : ''
+    if (!id) throw new Error('缺少账号 id')
+    const account = store.getAccount(id)
+    if (!account) throw new Error('账号不存在')
+    const url = LOGIN_URLS[account.type]
+    if (!url) {
+      return { ok: false, error: '该平台不需要登录（API Key 型账号请直接编辑密钥）', canRenew: false, renewHint: '' }
+    }
+    logger.info(`[ipc] 卡片重新登录：${account.name}（${account.type}）`)
+    return runSiteLogin({
+      url,
+      name: account.name,
+      platform: account.type,
+      accountId: id
+    })
   })
 
   // 手动续期登录（卡片上的「续期登录」按钮）

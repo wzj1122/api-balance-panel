@@ -252,6 +252,11 @@ export async function renewAccount(id: string): Promise<RpcResult<{ ok: boolean;
   return safeInvoke<{ ok: boolean; error: string; needLogin: boolean; expiresAt: number | null }>(IPC.ACCOUNT_RENEW, { id })
 }
 
+/** 一键重新登录（卡片按钮）：打开该平台的登录窗口，成功后主进程自动写回账号 */
+export async function reloginAccount(id: string): Promise<RpcResult<{ ok: boolean; cookie?: string; error?: string; canRenew?: boolean; renewHint?: string }>> {
+  return safeInvoke<{ ok: boolean; cookie?: string; error?: string; canRenew?: boolean; renewHint?: string }>(IPC.ACCOUNT_RELOGIN, { id })
+}
+
 // ---------- 数据校正 ----------
 
 /** 读某账号的校正视图 */
