@@ -1,3 +1,4 @@
+import { Notification } from 'electron'
 import { IPC } from '../shared/ipc'
 import type { RefreshPayload } from '../shared/ipc'
 import type { Account, BalanceResult, BalanceRow, CredentialSession, PanelPayload } from '../shared/types'
@@ -9,7 +10,7 @@ import { maybeNotify } from './notify'
 import { isDemo, demoRows } from './demo'
 import { updateTray } from './tray'
 import { runPool } from './runPool'
-import { renewCredential, msUntilExpiry, supportsRenewal } from './renewal'
+import { renewCredential, msUntilExpiry, sessionExpiryMs, supportsRenewal } from './renewal'
 import * as snapshot from './snapshot'
 import { store } from './store'
 import { getMainWindow } from './window'
@@ -105,7 +106,12 @@ async function queryAccount(accountInput: Account, force: boolean): Promise<Bala
 
   // 凭据临期（或已过期）→ 先静默续期，避免"正好卡在过期那一刻"报一次失败
   if (supportsRenewal(account.type)) {
-    const left = msUntilExpiry(account)
+    let left = msUntilExpiry(account)
+    // token 解不出到期时间（商汤）→ 退回用会话 Cookie 的到期时间判断，别等到 401 才续
+    if (left === null) {
+      const se = await sessionExpiryMs(account.type)
+      if (se !== null) left = se - Date.now()
+    }
     if (left !== null && left < 15 * 60 * 1000) {
       logger.info(`[query] ${account.name} 凭据${left <= 0 ? '已过期' : '将在 ' + Math.round(left / 60000) + ' 分钟后过期'}，先静默续期`)
       await renewForAccount(account, 'expired')
@@ -246,10 +252,19 @@ export function invalidateCache(accountId?: string): void {
 
 /** 保活定时器 */
 let keepAliveTimer: NodeJS.Timeout | null = null
+/** 已经提醒过"会话即将到期"的账号（按到期时间戳去重，避免重复轰炸） */
+const warnedExpiry = new Map<string, number>()
+/** 提前多久提醒"该重新登录了" */
+const EXPIRY_WARN_MS = 15 * 60 * 1000
 
 /**
  * 扫描所有登录型账号，把「即将过期 / 已过期 / 从未记录过期时间」的凭据续一遍。
  * 由 main/index.ts 定时调用：**窗口隐藏或最小化时同样运行**（保活就是要一直跑）。
+ *
+ * 2026-09-22 增补（商汤实测教训）：有些平台的会话是**绝对到期、无法续期**的
+ * （商汤 `oauth2_authentication_session` = 登录 + 3 小时，reload 也不顺延，且没有 refresh token）。
+ * 那种情况下再怎么续也没用，但**绝不能让它静默失效**——所以到期前 15 分钟先提醒一次，
+ * 让用户主动重新登录（新版登录点一下「只重新登录」即可）。
  *
  * @param maxAgeMs 距离过期还有多久就续（默认 60 分钟）
  */
@@ -259,7 +274,33 @@ export async function keepAliveSessions(maxAgeMs = 60 * 60 * 1000): Promise<numb
   let renewed = 0
   for (const acc of targets) {
     const left = msUntilExpiry(acc)
-    const needRenew = left === null ? Boolean(store.getSession(acc)) : left < maxAgeMs
+    // 会话（Cookie）的到期时间：商汤这类平台靠它判断"还能撑多久"，也是硬上限
+    const sessionExp = await sessionExpiryMs(acc.type)
+    const sessionLeft = sessionExp === null ? null : sessionExp - Date.now()
+
+    // 到期前提醒（每个到期时间只提醒一次）：绝对到期的会话救不回来，至少别让用户毫无预告地失联
+    if (sessionLeft !== null && sessionExp !== null && sessionLeft > 0 && sessionLeft < EXPIRY_WARN_MS) {
+      if (warnedExpiry.get(acc.id) !== sessionExp) {
+        warnedExpiry.set(acc.id, sessionExp)
+        logger.warn(`[keepalive] ${acc.name} 的登录会话将在约 ${Math.max(1, Math.round(sessionLeft / 60000))} 分钟后到期，需要重新登录`)
+        notifyExpiry(acc, sessionLeft)
+      }
+    } else if (sessionLeft === null || sessionLeft > EXPIRY_WARN_MS) {
+      warnedExpiry.delete(acc.id) // 重新登录后会话变了，允许下次再提醒
+    }
+
+    /**
+     * 要不要现在续：
+     * - token 到期时间已知（能解出 JWT exp）→ 按它判断；
+     * - token 到期时间未知（商汤的 token 解不出 exp）→ 退回用**会话到期时间**判断，
+     *   这样"会话还剩不到 1 小时"时才去续一次（此刻平台还能换出新 token），
+     *   而不是每 20 分钟白跑一趟隐藏窗口。
+     */
+    const needRenew = left !== null
+      ? left < maxAgeMs
+      : sessionLeft !== null
+        ? sessionLeft < maxAgeMs
+        : Boolean(store.getSession(acc))
     if (!needRenew) continue
     try {
       if (await renewForAccount(acc, 'startup')) renewed++
@@ -271,8 +312,21 @@ export async function keepAliveSessions(maxAgeMs = 60 * 60 * 1000): Promise<numb
   return renewed
 }
 
+/** 会话到期提醒（系统通知；失败不影响保活） */
+function notifyExpiry(account: Account, leftMs: number): void {
+  try {
+    if (!Notification.isSupported()) return
+    const min = Math.max(1, Math.round(leftMs / 60000))
+    new Notification({
+      title: account.name + ' 需要重新登录',
+      body: `登录会话约 ${min} 分钟后到期（该平台的会话无法自动续期）。请打开面板，在账号编辑里点「只重新登录」重登一次。`,
+      silent: false
+    }).show()
+  } catch { /* 通知失败不影响主流程 */ }
+}
+
 /** 启动保活定时器（应用启动 / 退出时调用一次） */
-export function startKeepAlive(intervalMs = 20 * 60 * 1000): void {
+export function startKeepAlive(intervalMs = 5 * 60 * 1000): void {
   if (keepAliveTimer) return
   keepAliveTimer = setInterval(() => {
     void keepAliveSessions().catch((e: unknown) => logger.warn('[keepalive] 保活失败：' + (e as Error).message))

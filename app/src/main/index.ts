@@ -109,8 +109,9 @@ void app.whenReady().then(() => {
     updateTray(undefined, scheduler.isPaused())
 
     // 会话保活：登录型平台（商汤 / 小米 MiMo）的 token 只有几小时，
-    // 这里每 20 分钟检查一次、临期就用会话静默换新，窗口隐藏/最小化时同样运行。
-    // 首次延迟 20 秒执行，避免和启动刷新抢网络。
+    // 这里每 5 分钟检查一次、临期就用会话静默换新，窗口隐藏/最小化时同样运行。
+    // （2026-09-22 从 20 分钟缩到 5 分钟：商汤的会话是"绝对到期、无法续期"的，
+    //   必须能在到期前 15 分钟那一刻准点提醒，否则用户会在毫无预告的情况下失联。）
     setTimeout(() => {
       void keepAliveSessions().catch((e: unknown) => logger.warn('[keepalive] 首轮保活失败：' + (e as Error).message))
     }, 20 * 1000)

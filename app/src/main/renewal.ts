@@ -317,3 +317,32 @@ export function msUntilExpiry(account: Account): number | null {
   if (typeof exp !== 'number' || exp <= 0) return null
   return exp - Date.now()
 }
+
+/**
+ * 读登录分区里那份**服务端会话**的到期时间（毫秒；读不到返回 null）。
+ *
+ * 为什么需要（2026-09-22 实测商汤定位）：
+ * 商汤的会话 Cookie `oauth2_authentication_session` 是**绝对到期**（登录时刻 + 3 小时），
+ * 反复 reload 控制台也不会顺延；而 `access_token` 正是服务端用这份会话换出来的，
+ * 换出来的 token 到期时间还紧贴会话上限。也就是说：
+ * **会话一到期，静默续期就彻底失效（没有 refresh token、也没有刷新接口），只能重新登录。**
+ * 所以这里把会话到期时间读出来，供上层"到期前提醒 + 到期前最后续一次"。
+ */
+export async function sessionExpiryMs(type: string): Promise<number | null> {
+  const recipe = renewalRecipeFor(type)
+  if (!recipe) return null
+  try {
+    const ses = session.fromPartition(recipe.partition)
+    const list = await ses.cookies.get({})
+    let max = 0
+    for (const c of list) {
+      // 只看像登录态的 Cookie（oauth2_ / api-platform_），不含统计类 Cookie
+      if (!/^(oauth2_|api-platform_)/.test(c.name)) continue
+      const exp = typeof c.expirationDate === 'number' ? c.expirationDate * 1000 : 0
+      if (exp > max) max = exp
+    }
+    return max > 0 ? max : null
+  } catch {
+    return null
+  }
+}
