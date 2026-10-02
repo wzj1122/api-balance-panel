@@ -98,6 +98,75 @@ const meta = computed(() => {
   return { pct: ratio * 100, level: pctLevel(ratio * 100), pctText: Math.round(ratio * 100) }
 })
 
+/**
+ * 套餐明细（2026-10-03 新增，用户要求）。
+ *
+ * 只有套餐型账号（小米 MiMo Token Plan）的适配器会带 plan 字段，卡片随即切成
+ * **横板宽卡**（跨两列）：左边是额度 + 按百分比折算的钱，右边是各模型的 Token 用量。
+ * 其它平台照旧走原来的竖卡，一行代码都不用改。
+ */
+const plan = computed(() => props.row.plan ?? null)
+const isWide = computed(() => plan.value !== null)
+/** 套餐额度用掉的比例（0~1） */
+const planUsedRatio = computed(() => {
+  const p = plan.value
+  if (!p) return 0
+  const used = props.row.used
+  const total = props.row.total
+  if (used !== null && used !== undefined && total !== null && total !== undefined && total > 0) {
+    return Math.max(0, Math.min(1, used / total))
+  }
+  return p.percent === null ? 0 : Math.max(0, Math.min(1, p.percent / 100))
+})
+/**
+ * 进度条仍沿用全站口径「条越长 = 剩得越多」，所以填的是**剩余占比**；
+ * 官方那个「已用 4.0%」写在右侧文字里，两个数都看得到，不会打架。
+ */
+const planRemainRatio = computed(() => 1 - planUsedRatio.value)
+const planLevel = computed(() => pctLevel(planRemainRatio.value * 100))
+const planPctText = computed(() => {
+  const p = plan.value
+  if (!p || p.percent === null) return '-'
+  return p.percent.toFixed(1) + '%'
+})
+/** 右边的模型行：按 Token 降序，最多显示 4 行，其余折叠成「+N 个模型」 */
+const models = computed(() => plan.value?.models ?? [])
+const shownModels = computed(() => models.value.slice(0, 4))
+const moreModels = computed(() => Math.max(0, models.value.length - shownModels.value.length))
+/** 模型条形图的分母（取最大的那个模型，条形长度才有对比度） */
+const modelMax = computed(() => models.value.reduce((m, x) => Math.max(m, x.totalTokens), 0))
+/** 三个细分口径的合计（跨模型求和），底部一行小字用 */
+const tokenSplit = computed(() => {
+  let hit = 0
+  let miss = 0
+  let out = 0
+  for (const m of models.value) {
+    hit += m.inputHitTokens
+    miss += m.inputMissTokens
+    out += m.outputTokens
+  }
+  return { hit, miss, out }
+})
+
+/** Token 数的紧凑写法（B / M / K），完整数字放在 title 里 */
+function fmtTok(v: number | null | undefined): string {
+  if (v === null || v === undefined || !Number.isFinite(v)) return '-'
+  if (v >= 1e9) return (v / 1e9).toFixed(2) + 'B'
+  if (v >= 1e6) return (v / 1e6).toFixed(2) + 'M'
+  if (v >= 1e3) return (v / 1e3).toFixed(2) + 'K'
+  return String(Math.round(v))
+}
+/** 千分位完整数字（悬浮提示用） */
+function fmtFull(v: number | null | undefined): string {
+  if (v === null || v === undefined || !Number.isFinite(v)) return '-'
+  return Math.round(v).toLocaleString('en-US')
+}
+/** 元：固定两位（¥1.56），不用 fmtNumber 的「万/亿」口径 */
+function fmtYuan(v: number | null | undefined): string {
+  if (v === null || v === undefined || !Number.isFinite(v)) return '-'
+  return '¥' + v.toFixed(2)
+}
+
 const forecast = computed(() => {
   const f = props.forecast
   if (!f || f.forecastDaysLeft === null || f.forecastDaysLeft === undefined || !f.estEmptyTs) return null
@@ -357,7 +426,12 @@ onBeforeUnmount(() => {
   </article>
 
   <!-- 成功态 -->
-  <article v-else class="card" :class="{ low: row.lowBalance }" :style="{ '--card-acc': PLATFORM_COLORS[row.type] }">
+  <article
+    v-else
+    class="card"
+    :class="{ low: row.lowBalance, 'wide': isWide }"
+    :style="{ '--card-acc': PLATFORM_COLORS[row.type] }"
+  >
     <header class="head">
       <span class="dot-p" :style="{ background: 'var(--card-acc)' }"></span>
       <span class="name">{{ row.name }}</span>
@@ -460,6 +534,72 @@ onBeforeUnmount(() => {
       </span>
     </header>
 
+    <!-- ---------- 套餐型账号：横板宽卡（左：额度 + 折算金额；右：分模型 Token） ---------- -->
+    <div v-if="isWide && plan" class="wide-body">
+      <div class="wb-left">
+        <div class="balance" :class="{ low: row.lowBalance }">
+          <div class="balance-line">
+            <span class="amount num">{{ fmtNumber(row.remaining) }}</span>
+            <span class="unit">{{ row.unit }}</span>
+          </div>
+          <span v-if="row.lowBalance" class="badge warn">低余额</span>
+        </div>
+        <div class="bar" :title="'官方额度口径：已用 ' + planPctText + '；进度条与其它卡片一致，显示剩余占比'">
+          <div class="track">
+            <div class="fill" :class="planLevel" :style="{ width: planRemainRatio * 100 + '%' }"></div>
+          </div>
+          <div class="bar-row">
+            <span>剩余 {{ fmtNumber(row.remaining) }} / {{ fmtNumber(row.total) }} {{ row.unit }}</span>
+            <span class="pct" :class="planLevel">已用 {{ planPctText }}</span>
+          </div>
+        </div>
+        <div class="wb-money">
+          <span class="wb-price">{{ plan.priceNote }}</span>
+          <span class="wb-sep">·</span>
+          <span>已用 <b>{{ fmtYuan(plan.usedCny) }}</b></span>
+          <span class="wb-sep">·</span>
+          <span>剩余 <b>{{ fmtYuan(plan.remainCny) }}</b></span>
+        </div>
+        <div class="wb-sub">
+          <span v-if="plan.autoRenew">连续包月</span>
+          <span v-if="plan.autoRenew" class="wb-sep">·</span>
+          <span>有效期至 {{ plan.periodEnd || '-' }}</span>
+          <span v-if="plan.expired" class="badge err">已过期</span>
+        </div>
+      </div>
+
+      <div class="wb-right">
+        <div class="wb-right-head">
+          <span class="wb-title">模型 Token 用量</span>
+          <span class="wb-window" :title="plan.tokenWindow">{{ plan.tokenWindow }}</span>
+          <span class="wb-total num">
+            <b>{{ fmtTok(plan.totalTokens) }}</b> Tokens
+            <span class="wb-sep">·</span>
+            {{ plan.requestCount === null ? '-' : fmtFull(plan.requestCount) }} 次请求
+          </span>
+        </div>
+        <ul v-if="shownModels.length" class="wb-models">
+          <li v-for="m in shownModels" :key="m.model" class="wb-model">
+            <span class="wb-model-name" :title="m.model">{{ m.model }}</span>
+            <span class="wb-model-bar" :title="fmtFull(m.totalTokens) + ' Tokens · ' + m.requestCount + ' 次请求'">
+              <i :style="{ width: (modelMax > 0 ? Math.max(2, (m.totalTokens / modelMax) * 100) : 0) + '%' }"></i>
+            </span>
+            <span class="wb-model-tok num" :title="fmtFull(m.totalTokens) + ' Tokens'">{{ fmtTok(m.totalTokens) }}</span>
+            <span class="wb-model-pct num">
+              {{ plan.totalTokens && plan.totalTokens > 0 ? ((m.totalTokens / plan.totalTokens) * 100).toFixed(1) + '%' : '-' }}
+            </span>
+          </li>
+        </ul>
+        <p v-else class="wb-empty">没有取到分模型用量（{{ plan.tokenWindow }}）</p>
+        <p v-if="shownModels.length" class="wb-split">
+          输入 {{ fmtTok(tokenSplit.hit) }} 命中 / {{ fmtTok(tokenSplit.miss) }} 未命中 · 输出 {{ fmtTok(tokenSplit.out) }}
+          <span v-if="moreModels > 0" class="wb-more">· 另有 {{ moreModels }} 个模型</span>
+        </p>
+      </div>
+    </div>
+
+    <!-- ---------- 普通账号：原来的竖卡 ---------- -->
+    <template v-else>
     <div class="balance" :class="{ low: row.lowBalance }">
       <div class="balance-line">
         <span class="amount num">{{ fmtNumber(row.remaining) }}</span>
@@ -490,6 +630,7 @@ onBeforeUnmount(() => {
         <span v-if="it.note" class="it-note">{{ it.note }}</span>
       </li>
     </ul>
+    </template>
 
     <p v-if="forecast" class="fcast" :class="forecast.cls">{{ forecast.text }}</p>
 
@@ -596,6 +737,174 @@ onBeforeUnmount(() => {
 
 .card.disabled::before {
   display: none;
+}
+
+/* ---------- 套餐横板宽卡（跨两列） ----------
+   窗口最小 900px、侧栏 200px、内容区左右各 24px，内容宽 ≥ 652px，
+   放得下「两列 300px + 16px 间距」，所以 span 2 在最小窗口下也安全；
+   再窄（<880px 视口）就退回单列，避免撑出横向滚动条。 */
+.card.wide {
+  grid-column: span 2;
+  min-height: 0;
+}
+
+@media (max-width: 880px) {
+  .card.wide {
+    grid-column: span 1;
+  }
+}
+
+.wide-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.12fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.wb-left {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.wb-right {
+  min-width: 0;
+  border-left: 1px solid var(--line-soft);
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.wb-right-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.wb-title {
+  font-size: var(--fs-sub);
+  font-weight: 600;
+  color: var(--tx);
+  flex: none;
+}
+
+.wb-window {
+  font-size: var(--fs-foot);
+  color: var(--tx3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 190px;
+  flex: 0 1 auto;
+}
+
+.wb-total {
+  margin-left: auto;
+  font-size: var(--fs-foot);
+  color: var(--tx2);
+  white-space: nowrap;
+  flex: none;
+}
+
+.wb-models {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.wb-model {
+  display: grid;
+  grid-template-columns: minmax(64px, 1.35fr) minmax(40px, 1.6fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-foot);
+  min-width: 0;
+}
+
+.wb-model-name {
+  color: var(--tx2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wb-model-bar {
+  display: block;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--track);
+  overflow: hidden;
+}
+
+.wb-model-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--card-acc);
+  opacity: 0.85;
+}
+
+.wb-model-tok {
+  color: var(--tx);
+  font-weight: 600;
+  min-width: 48px;
+  text-align: right;
+}
+
+.wb-model-pct {
+  color: var(--tx3);
+  min-width: 44px;
+  text-align: right;
+}
+
+.wb-split,
+.wb-empty {
+  font-size: var(--fs-foot-sm);
+  color: var(--tx3);
+  margin: 0;
+}
+
+.wb-more {
+  color: var(--tx2);
+}
+
+.wb-money {
+  margin-top: 6px;
+  font-size: var(--fs-foot);
+  color: var(--tx2);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.wb-money b {
+  color: var(--tx-strong);
+  font-weight: 650;
+}
+
+.wb-price {
+  color: var(--tx);
+  font-weight: 600;
+}
+
+.wb-sub {
+  margin-top: 4px;
+  font-size: var(--fs-foot-sm);
+  color: var(--tx3);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.wb-sep {
+  color: var(--line-strong);
 }
 
 .head {

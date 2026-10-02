@@ -1,4 +1,4 @@
-import type { Account, AccountType, BalanceRow, Snapshot } from '../shared/types'
+import type { Account, AccountType, BalanceRow, PlanUsageInfo, Snapshot } from '../shared/types'
 
 /**
  * 演示模式：内置示例账号与最近 30 天的示例快照。
@@ -112,6 +112,58 @@ export function demoAccounts(): Account[] {
   }))
 }
 
+/** 演示模式下的套餐明细（形状与 mimo-plan 适配器返回的 plan 一致，方便预览新卡片样式） */
+function demoPlan(def: DemoDef, remaining: number): PlanUsageInfo | null {
+  if (def.type !== 'mimo-plan') return null
+  const used = Math.round((def.start - remaining) * 1e6) / 1e6
+  const frac = def.start > 0 ? used / def.start : 0
+  const price = 39
+  return {
+    planCode: 'lite',
+    planName: 'Lite',
+    periodEnd: new Date(Date.now() + 29 * DAY_MS).toISOString().slice(0, 10),
+    expired: false,
+    autoRenew: true,
+    price,
+    priceNote: 'Lite ¥39.00/月',
+    percent: Math.round(frac * 10000) / 100,
+    usedCny: Math.round(frac * price * 100) / 100,
+    remainCny: Math.round((1 - frac) * price * 100) / 100,
+    tokenWindow: '本计费周期（演示数据）',
+    totalTokens: 65157997,
+    requestCount: 173,
+    models: [
+      {
+        model: 'mimo-v2.6-flash',
+        category: '语言模型',
+        totalTokens: 65157997,
+        inputHitTokens: 64879680,
+        inputMissTokens: 181638,
+        outputTokens: 96679,
+        requestCount: 173
+      },
+      {
+        model: 'mimo-v2.5-pro',
+        category: '语言模型',
+        totalTokens: 12188648,
+        inputHitTokens: 11070912,
+        inputMissTokens: 1052817,
+        outputTokens: 64919,
+        requestCount: 207
+      },
+      {
+        model: 'mimo-v2.5-tts',
+        category: '语音合成模型',
+        totalTokens: 486000,
+        inputHitTokens: 0,
+        inputMissTokens: 486000,
+        outputTokens: 0,
+        requestCount: 12
+      }
+    ]
+  }
+}
+
 /** 当前余额行（带轻微抖动，让每次刷新看起来在动） */
 export function demoRows(): BalanceRow[] {
   const now = Date.now()
@@ -139,7 +191,8 @@ export function demoRows(): BalanceRow[] {
       note: '演示数据',
       latencyMs: 260,
       ts: now,
-      cached: false
+      cached: false,
+      plan: demoPlan(def, remaining)
     }
   })
 }

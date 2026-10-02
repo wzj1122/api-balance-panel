@@ -206,6 +206,35 @@ export const MIMO_BALANCE_URL = 'https://platform.xiaomimimo.com/api/v1/balance'
 export const MIMO_PLAN_URL = 'https://platform.xiaomimimo.com/api/v1/tokenPlan/usage'
 /** 小米 MiMo Token Plan 套餐详情（Cookie 方式：套餐名 + 有效期） */
 export const MIMO_PLAN_DETAIL_URL = 'https://platform.xiaomimimo.com/api/v1/tokenPlan/detail'
+
+/**
+ * 小米 MiMo Token Plan「使用详情」（按日期 + 模型拆分 Token）。
+ *
+ * 用法：**POST** JSON `{ year, month }`（只给 year 时按「月 × 模型」聚合）。
+ * 必须带上查询参数 `?api-platform_ph=<Cookie 里 api-platform_ph 去掉首尾引号后的值>`，
+ * 否则服务端直接返回 401 + 小米登录跳转地址（2026-10-03 实测：缺这个参数一律 401，
+ * 只带 Cookie 也不行）。
+ */
+export const MIMO_PLAN_USAGE_DETAIL_URL = 'https://platform.xiaomimimo.com/api/v1/usage/token-plan/list'
+
+/**
+ * 小米 MiMo Token Plan 价目表（标价，单位：元 / 计费周期）。
+ *
+ * 来源：2026-10-03 取自平台 GET /api/v1/tokenPlan/list 的 planPrice 字段，
+ * 与用户给出的口径一致（Lite ¥39、Standard ¥99、Pro ¥329、Max ¥659，均为月付标价）。
+ * 年付档（xxx:year）的 planPrice 是「年价」，months=12 用于折算月均价。
+ * 只用于「按百分比把套餐额度折算成钱」这一个用途，不是官方汇率。
+ */
+export const MIMO_PLAN_PRICES: Record<string, { name: string; price: number; months: number }> = {
+  lite: { name: 'Lite', price: 39, months: 1 },
+  standard: { name: 'Standard', price: 99, months: 1 },
+  pro: { name: 'Pro', price: 329, months: 1 },
+  max: { name: 'Max', price: 659, months: 1 },
+  'lite:year': { name: 'Lite', price: 411.84, months: 12 },
+  'standard:year': { name: 'Standard', price: 1045.44, months: 12 },
+  'pro:year': { name: 'Pro', price: 3474.24, months: 12 },
+  'max:year': { name: 'Max', price: 6959.04, months: 12 }
+}
 /** MiniMax 统一登录页（直达登录表单；登录完成自动检测并关闭窗口） */
 export const MINIMAX_LOGIN_URL = 'https://account.minimax.cn/unified-login?login_redirect=%2Foauth2%2Fauthorize%3Fclient_id%3Dplatform-minimax%26redirect_uri%3Dhttps%253A%252F%252Fwww.minimax.cn%252Fauth%252Fcallback%26response_type%3Dcode%26state%3DeyJyZWRpcmVjdF91cmkiOiJodHRwczovL3BsYXRmb3JtLm1pbmltYXguY24vY29uc29sZS9wZXJzb25hbC1pbmZvIiwiY3NyZiI6IjU2NWRmN2M2LTA0ODUtNDczZC04NmEyLTEwZWY1OTI3YTBiMSJ9'
 /** MiniMax 后端域名（钱包接口所在，.com 国际站 / .cn 国内站镜像） */

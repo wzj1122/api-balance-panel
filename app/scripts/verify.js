@@ -167,6 +167,46 @@ async function main() {
     const weird = s5.saveSettings({ refresh_seconds: -1, concurrency: 999, theme: 'dark' })
     check('6a 非法 refresh_seconds 回落 300', weird.refresh_seconds === 300, '实际=' + weird.refresh_seconds)
     check('6b 越界 concurrency 钳到 32', weird.concurrency === 32, '实际=' + weird.concurrency)
+
+    // ---------- 7. 登录 Promise 一定会落定（2026-10-03 P0 回归） ----------
+    /**
+     * 曾经的 bug：走「分区里已有可用会话 → 直接复用」这条路径时，
+     * settleWith() 只关窗、不 resolve，而 win.on('closed') 又对"校验通过主动关窗"
+     * 直接 return —— 于是 loginToSite() 的 Promise 永远不落定：
+     * 登录窗口自动关了、账号侧凭据也存好了，但界面一直停在「等待登录…」，
+     * 表单里的 Cookie 是空的，点保存只会看到「请先点『登录』获取 Cookie」。
+     * 这里用假站点 + 桩校验复现该路径，断言 8 秒内必须拿到 ok 结果。
+     */
+    {
+      const { loginToSite } = require('./.tmp/main/browser/index.js')
+      const { session } = require('electron')
+      const HOST = 'verify-panel.local'
+      const ses = session.fromPartition('persist:login-' + HOST)
+      await ses.clearStorageData({ storages: ['cookies', 'localstorage'] })
+      await ses.cookies.set({ url: 'https://' + HOST + '/', name: 'passToken', value: 'v'.repeat(48) })
+      let out = 'timeout'
+      try {
+        out = await Promise.race([
+          loginToSite({
+            url: 'https://' + HOST + '/login',
+            name: '回归测试站',
+            partitionHost: HOST,
+            validate: async () => null,
+            verify: async () => null
+          }),
+          new Promise((res) => setTimeout(() => res('timeout'), 8000))
+        ])
+      } catch (e) {
+        out = 'throw: ' + (e && e.message)
+      }
+      check('7a 复用已有会话时 loginToSite 会落定（不挂死）', out !== 'timeout', out === 'timeout' ? '8 秒仍未返回' : '')
+      check(
+        '7b 落定结果是 ok + 带凭据',
+        out !== 'timeout' && out && out.ok === true && typeof out.cookie === 'string' && out.cookie.includes('passToken'),
+        out === 'timeout' ? '' : String(out).slice(0, 140)
+      )
+      await ses.clearStorageData({ storages: ['cookies', 'localstorage'] })
+    }
   } catch (e) {
     check('脚本执行未抛异常', false, e && e.stack ? e.stack : String(e))
   } finally {

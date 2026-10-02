@@ -12,6 +12,7 @@
 ## ✨ 功能一览
 
 - **余额卡片墙**：DeepSeek / siliconflow / Xiaomi MIMO（余额 + TokenPlan）/ MiniMax / bigmodel / 阿里云百炼 / **SenseNova（商汤 Token Plan：5 小时窗口 + 周额度 + 专属积分池）**，一张卡片一个账号，按类型分组可折叠
+- **Xiaomi MIMO TokenPlan 横板宽卡**（跨两列，只对套餐型账号生效）：左边是剩余 / 总额度、官方已用百分比、有效期与**按百分比折算的套餐金额**（Lite ¥39 / Standard ¥99 / Pro ¥329 / Max ¥659）；右边是**本计费周期的 Token 总消耗、请求次数与各模型明细**（模型 Token 数 + 占比条 + 输入命中/未命中/输出）。两套口径（Credits / Tokens）分开显示、绝不相加
 - **自动定时刷新**：默认 5 分钟一次（可调 1 / 5 / 15 / 30 / 60 分钟），最小化到托盘默认暂停刷新、回到前台立即补刷（可关掉「窗口隐藏时暂停」让后台继续刷）
 - **低余额提醒**：每个账号可单独设阈值，触发后卡片变色 + 系统通知
 - **余额耗尽预估**：按近 7 天日均消耗外推「预计 MM-DD 耗尽 · 约剩 N 天」
@@ -31,7 +32,7 @@
 
 ## 📦 安装（推荐：安装包）
 
-1. 到 [Releases 页面](https://github.com/wzj1122/api-balance-panel/releases) 下载最新安装包（约 130 MB）。GitHub 附件名不支持中文，实际下载文件名为 **`API.Setup.<版本号>.exe`**（Releases 页最新发布版为 `API.Setup.1.3.0.exe`，源码最新版 v1.6.0 见 `main` 分支 / 本地打包产物 `API 余额面板 Setup 1.6.0.exe`；安装后的程序/快捷方式名为「API 余额面板」）。
+1. 到 [Releases 页面](https://github.com/wzj1122/api-balance-panel/releases) 下载最新安装包（约 130 MB）。GitHub 附件名不支持中文，实际下载文件名为 **`API.Setup.<版本号>.exe`**（Releases 页最新发布版为 `API.Setup.1.3.0.exe`，源码最新版 v1.7.0 见 `main` 分支 / 本地打包产物 `API 余额面板 Setup 1.7.0.exe`；安装后的程序/快捷方式名为「API 余额面板」）。
 2. 双击运行，跟着安装向导走（默认装到当前用户目录，可点「高级选项」改安装位置）。
 3. 装完后桌面 / 开始菜单出现「API 余额面板」，首次启动如遇 Windows SmartScreen 提示，点 **「更多信息 → 仍要运行」** 即可（个人分发未购买代码签名证书，属正常现象）。
 4. 数据保存在 `%APPDATA%\API 余额面板\`（`config.json` + `snapshots.json` + `logs\`），备份/换电脑拷贝整个文件夹即可。

@@ -343,6 +343,17 @@ export function loginToSite(opts: LoginOptions): Promise<LoginResult> {
       logger.info(`[browser] ${opts.name} ${why}`)
       try { win.setTitle('登录 ' + opts.name + '（校验通过，即将自动关闭）') } catch { /* 忽略 */ }
       await sleep(200) // 留一点时间给最后一批凭据落盘
+      /**
+       * **必须在这里自己把 Promise 落定**（2026-10-03 修的 P0）。
+       *
+       * 以前这里只关窗、等 `win.on('closed')` 去 resolve；而那个回调开头就是
+       * `if (settled && pendingCredential) return`（"校验通过主动关窗"这一种情况直接跳过），
+       * 于是这条路径上**没有任何地方调用 resolve**：登录窗口关了、账号侧复验也过了，
+       * 但渲染进程的 await loginSite(...) 永远不返回 —— 登录按钮永远停在「等待登录…」，
+       * 表单里的 Cookie 也永远是空的，用户点「保存账号」只会看到
+       * 「请先点『登录』获取 Cookie」——即"登录完成却提示还需要登录"。
+       */
+      resolve({ ok: true, cookie: value, session: await buildSession(value) })
       closeWin()
       return true
     }

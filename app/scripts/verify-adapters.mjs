@@ -74,6 +74,28 @@ async function bundle(entry, name) {
 
 const { PROVIDERS } = await bundle('src/main/adapters/index.ts', 'adapters')
 
+/**
+ * MiMo Token Plan 的 mock 口径：套餐周期固定成「从现在起 1 个月」，
+ * 「使用详情」只在**周期起点那个自然月**返回数据，其余月份返回空数组。
+ * 这样无论测试跑在哪一天、适配器内部查了几个月，汇总结果都是确定的。
+ */
+const MP_END = new Date(Date.now() + 30 * 86400000)
+const MP_END_Y = MP_END.getUTCFullYear()
+const MP_END_M = MP_END.getUTCMonth() + 1
+const MP_END_STR =
+  `${MP_END_Y}-${String(MP_END_M).padStart(2, '0')}-${String(MP_END.getUTCDate()).padStart(2, '0')} 23:59:59`
+/** 周期起点（= 结束往前 1 个月）：适配器只会查「起点月 ~ 当前月」，mock 数据就挂在起点月 */
+const MP_START = new Date(Date.UTC(MP_END_Y, MP_END_M - 2, MP_END.getUTCDate()))
+const MP_START_Y = MP_START.getUTCFullYear()
+const MP_START_M = MP_START.getUTCMonth() + 1
+/** 起点月最后一天（一定 ≥ 周期起点当天），用作 mock 行的日期 */
+const MP_ROW_DATE = new Date(Date.UTC(MP_START_Y, MP_START_M, 0)).toISOString().slice(0, 10)
+const MP_ROWS = [
+  { date: MP_ROW_DATE, model: 'mimo-v2.6-flash', totalToken: 65157997, inputHitToken: 64879680, inputMissToken: 181638, outputToken: 96679, requestCount: 173, inputAudioDuration: 0 },
+  { date: MP_ROW_DATE, model: 'mimo-v2.5-pro', totalToken: 1000000, inputHitToken: 900000, inputMissToken: 80000, outputToken: 20000, requestCount: 7, inputAudioDuration: 0 }
+]
+let MP_PH_SEEN = ''
+
 // ---- siliconflow 控制台 mock（页面 -> SF_SUBJECT_ID -> walletd 接口） ----
 let SF_MODE = 'ok' // ok | expired | loginwall
 let ALIYUN_MODE = 'ok' // ok | badkey | notfound
@@ -161,7 +183,18 @@ globalThis.fetch = async (url, opts) => {
     const cookie = (opts && opts.headers && opts.headers.Cookie) || ''
     if (cookie.includes('expired')) return { status: 401, text: async () => '{}' }
     if (cookie.includes('noplan')) return json(200, { code: 0, data: {} })
-    return json(200, { code: 0, data: { planCode: 'lite', planName: 'Lite', currentPeriodEnd: '2026-09-28 23:59:59', expired: false } })
+    return json(200, { code: 0, data: { planCode: 'lite', planName: 'Lite', currentPeriodEnd: MP_END_STR, expired: false, enableAutoRenew: true, hasAutoRenewSubscribed: true } })
+  }
+  if (u.includes('platform.xiaomimimo.com/api/v1/usage/token-plan/list')) {
+    const cookie = (opts && opts.headers && opts.headers.Cookie) || ''
+    if (cookie.includes('expired')) return { status: 401, text: async () => '{}' }
+    // 真实接口必须带 api-platform_ph，否则 401（2026-10-03 实测）
+    const ph = new URL(u).searchParams.get('api-platform_ph') || ''
+    if (!ph) return json(401, { code: 401, loginUrl: 'https://account.xiaomi.com/pass/serviceLogin' })
+    MP_PH_SEEN = ph
+    const body = JSON.parse((opts && opts.body) || '{}')
+    const inPeriodMonth = body.year === MP_START_Y && body.month === MP_START_M
+    return json(200, { code: 0, data: inPeriodMonth ? MP_ROWS : [] })
   }
   if (u.includes('platform.xiaomimimo.com/api/v1/tokenPlan/usage')) {
     const cookie = (opts && opts.headers && opts.headers.Cookie) || ''
@@ -466,16 +499,42 @@ ok(errorText('COOKIE_EXPIRED') === '登录已过期，点「登录」重新获�
   ok(signRpc('sec2', { A: '1', B: '2' }) !== s1, 'aliyun signRpc 不同密钥 → 不同签名')
 }
 
-// ---------- 10e. mimo-plan（Token Plan 套餐） ----------
+// ---------- 10e. mimo-plan（Token Plan 套餐 + 分模型 Token + 百分比折算） ----------
 {
-  const planCtx = { getSecret: () => 'cookie=abc; token=xyz' }
+  const planCtx = { getSecret: () => 'cookie=abc; api-platform_ph="OvXUxDcJjQ8FCHnu0605CQ=="' }
   const r = await PROVIDERS['mimo-plan']({ type: 'mimo-plan' }, planCtx)
   close(r.remaining, 2463.037581, 'mimo-plan remaining=4100-1636.962419=2463.037581')
   close(r.total, 4100, 'mimo-plan total=4100 M Credits')
   close(r.used, 1636.962419, 'mimo-plan used=1636.962419')
   ok(r.unit === 'M Credits', 'mimo-plan unit=M Credits')
-  ok(r.note.includes('Lite') && r.note.includes('2026-09-28'), 'mimo-plan note 含套餐名+有效期', r.note)
+  ok(r.note.includes('Lite'), 'mimo-plan note 含套餐名', r.note)
   ok(r.items.length === 1, 'mimo-plan 一条子项')
+
+  const p = r.plan
+  ok(!!p, 'mimo-plan 带 plan 明细')
+  ok(p.planCode === 'lite' && p.planName === 'Lite', 'mimo-plan planCode/planName=lite/Lite')
+  ok(p.autoRenew === true, 'mimo-plan 自动续费标记')
+  ok(p.priceNote.includes('¥39.00/月'), 'mimo-plan 价格口径=Lite ¥39.00/月', p.priceNote)
+  close(p.percent, 40, 'mimo-plan 官方百分比=40%')
+  close(p.usedCny, 15.6, 'mimo-plan 已用折算=40%×39=15.6')
+  close(p.remainCny, 23.4, 'mimo-plan 剩余折算=39-15.6=23.4')
+  close(p.totalTokens, 66157997, 'mimo-plan Token 合计=65157997+1000000')
+  close(p.requestCount, 180, 'mimo-plan 请求数=173+7')
+  ok(p.models.length === 2, 'mimo-plan 两个模型', `实际 ${p.models?.length}`)
+  ok(p.models[0].model === 'mimo-v2.6-flash', 'mimo-plan 模型按 Token 降序', p.models[0]?.model)
+  close(p.models[0].totalTokens, 65157997, 'mimo-plan 模型 1 总量')
+  close(p.models[0].inputHitTokens, 64879680, 'mimo-plan 模型 1 输入命中')
+  close(p.models[0].outputTokens, 96679, 'mimo-plan 模型 1 输出')
+  ok(p.models[0].category === '语言模型', 'mimo-plan 模型分类=语言模型')
+  ok(MP_PH_SEEN === 'OvXUxDcJjQ8FCHnu0605CQ==', 'mimo-plan 查询明细带 api-platform_ph（去掉引号）', MP_PH_SEEN)
+  ok(p.tokenWindow.includes('本计费周期'), 'mimo-plan Token 口径说明', p.tokenWindow)
+}
+{
+  // 没有 ph cookie：明细取不到也不能让整张卡失败，额度照常显示
+  const r = await PROVIDERS['mimo-plan']({ type: 'mimo-plan' }, { getSecret: () => 'cookie=abc' })
+  ok(r.plan && r.plan.totalTokens === null, 'mimo-plan 缺 api-platform_ph → Token 明细为空但额度正常')
+  ok(r.plan.models.length === 0, 'mimo-plan 缺 api-platform_ph → 无模型行')
+  close(r.remaining, 2463.037581, 'mimo-plan 缺 ph 时额度仍正确')
 }
 await expectCode(PROVIDERS['mimo-plan'], { type: 'mimo-plan' }, 'COOKIE_EXPIRED', 'mimo-plan Cookie 过期 → COOKIE_EXPIRED', { getSecret: () => 'cookie=expired' })
 await expectCode(PROVIDERS['mimo-plan'], { type: 'mimo-plan' }, 'BAD_PATH', 'mimo-plan 未开通套餐 → BAD_PATH', { getSecret: () => 'cookie=noplan' })

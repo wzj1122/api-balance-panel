@@ -251,6 +251,62 @@ export interface BalanceItem {
   note?: string
 }
 
+/**
+ * 套餐内单个模型的 Token 用量（小米 MiMo Token Plan「使用详情」接口）。
+ * 单位是 **Tokens**，与套餐额度的 Credits 是两套不同口径，不要相加。
+ */
+export interface PlanModelUsage {
+  /** 模型名，如 mimo-v2.6-flash */
+  model: string
+  /** 平台的三分类：语言模型 / 语音识别模型 / 语音合成模型 */
+  category: string
+  totalTokens: number
+  /** 输入中命中缓存的 Token */
+  inputHitTokens: number
+  /** 输入中未命中缓存的 Token */
+  inputMissTokens: number
+  outputTokens: number
+  requestCount: number
+}
+
+/**
+ * 套餐型账号（目前只有小米 MiMo Token Plan）的套餐与用量附加信息。
+ *
+ * 为什么单独挂一个字段而不是塞进 items：items 是「名称 + 剩余/总额」的通用子项，
+ * 而套餐要展示的是「额度百分比 × 套餐价折算金额 + 分模型 Token 用量」，
+ * 结构完全不同，塞进 items 会把现有卡片渲染和快照口径一起搞乱。
+ */
+export interface PlanUsageInfo {
+  /** 套餐码，如 lite / pro / lite:year */
+  planCode: string
+  /** 套餐名，如 Lite */
+  planName: string
+  /** 有效期至（YYYY-MM-DD） */
+  periodEnd: string
+  /** 平台标记套餐已过期 */
+  expired: boolean
+  /** 连续包月 / 已开启自动续费 */
+  autoRenew: boolean
+  /** 该计费周期的套餐标价（元）；查不到价目表时为 null */
+  price: number | null
+  /** 价格口径说明，如「Lite ¥39/月」 */
+  priceNote: string
+  /** 官方额度使用百分比（0~100） */
+  percent: number | null
+  /** 按百分比折算：本周期已用金额（元） */
+  usedCny: number | null
+  /** 按百分比折算：本周期剩余金额（元） */
+  remainCny: number | null
+  /** Token 用量的统计口径说明，如「本计费周期（10-02 起）」 */
+  tokenWindow: string
+  /** 该口径下的 Token 总数；明细取不到时为 null */
+  totalTokens: number | null
+  /** 该口径下的请求次数；明细取不到时为 null */
+  requestCount: number | null
+  /** 各模型用量（按总 Token 降序）；取不到时为 [] */
+  models: PlanModelUsage[]
+}
+
 /** 一次查询的结果 */
 export interface BalanceResult {
   ok: boolean
@@ -270,6 +326,8 @@ export interface BalanceResult {
   errorCode?: ErrorCode
   /** 原始信息小字（仅供排查，界面用小字展示） */
   errorDetail?: string
+  /** 套餐型账号的套餐 + 用量明细（目前仅小米 MiMo Token Plan 提供） */
+  plan?: PlanUsageInfo | null
 }
 
 /** 一行卡片数据 = 结果 + 账号信息 */

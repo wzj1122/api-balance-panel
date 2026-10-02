@@ -1,4 +1,4 @@
-import type { BalanceItem, BalanceResult } from '../../shared/types'
+import type { BalanceItem, BalanceResult, PlanUsageInfo } from '../../shared/types'
 import { AdapterError } from '../errors'
 
 /**
@@ -78,6 +78,7 @@ export function okResult(p: {
   unit?: string
   note?: string
   items?: BalanceItem[]
+  plan?: PlanUsageInfo | null
 }): BalanceResult {
   let used = p.used ?? null
   if (used === null && p.remaining !== null && p.total !== null) {
@@ -93,6 +94,7 @@ export function okResult(p: {
     items: p.items ?? [],
     ts: Date.now(),
     latencyMs: 0,
-    cached: false
+    cached: false,
+    plan: p.plan ?? null
   }
 }
