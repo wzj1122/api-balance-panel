@@ -80,12 +80,11 @@ api-show/
 │   │   ├── preload/        # contextBridge 白名单（window.api）
 │   │   ├── renderer/       # Vue 3 界面（index.html 在 renderer 根）
 │   │   └── shared/         # 两端共用类型 / 常量 / IPC 通道 / 格式化 / 折算
-│   ├── resources/          # 图标 + 12 张内置背景图
+│   ├── resources/          # 图标 + 14 张内置背景图
 │   ├── scripts/            # 正式验证脚本（verify.js / verify-adapters.mjs）+ 图标生成
 │   ├── out/                # 构建产物（忽略，git 不进）
 │   └── dist/               # 打包产物（忽略，git 不进）
 ├── docs/                   # 设计与需求文档（历史 + 现行说明）
-├── 主题/                   # 主题 CSS 交付物 + 预览页（归属本软件，不单独建手册）
 ├── memory/                 # 开发过程日志（.gitignore 已忽略，不推送）
 └── 归档/                   # 一次性诊断脚本归档
 ```
@@ -106,7 +105,6 @@ api-show/
 | `LICENSE` | 专有许可全文（Source-available，保留所有权利） | 版权 © 2026 Zhenjie Wang；`package.json` 的 `license` 指向它 |
 | `.gitignore` | 仓库根忽略：node_modules / dist / out / logs / `*.log` / `.e2e-*/` / `scripts/.tmp/` / `scripts/.verify/` / `config.json` `config.json.bak` `config.json.tmp` `snapshots.json` `*.corrupt-*.json` / `memory/` | **`memory/` 被忽略**：开发日志不进公开仓库。用户数据文件必须始终在此列表内 |
 | `docs/` | 见 3.8 | — |
-| `主题/` | 见 3.9 | 归属本软件，不单独建手册 |
 | `memory/` | 见 3.9 | 开发日志，已忽略 |
 | `归档/` | 见 3.9 | 一次性脚本归档 |
 
@@ -227,7 +225,7 @@ api-show/
 | `components/AccountCard.vue` | **最重要的展示组件**（1415 行）：单账号卡片（余额、单位、进度条、阈值变色、备注、发光/玻璃效果）；登录入口大号「点击登录」框（仅"需要登录"时出现）；模型明细；趋势悬浮窗（420px，1/6/24 小时轴自动选择，点外部/Esc 关闭）；**MiMo TokenPlan 横板宽卡**（跨两列：左 = 额度 + 按百分比折元，右 = 本周期 Token 总量 / 请求数 / 各模型占比） | emit：`refresh` / `edit` / `remove` / `relogin` / `correct`。判断逻辑"是否该提示登录"只认凭据类错误（`COOKIE_EXPIRED` / 返回非数据），网络类失败不弹登录框。进度条口径全站统一"越长 = 剩得越多" |
 | `components/AccountDialog.vue` | 新增/编辑账号弹窗：按 `PROVIDER_META` 动态渲染字段（Key / base_url / user_id / 自定义 request+extract）、平台下拉、各平台「登录获取 Cookie / 只重新登录」、登录后自动保存、MiMo「一键添加另一种方式」→ `save-both` | 编辑历史 `newapi` / `custom` 账号时要把该类型补进下拉，否则 select 显示空值 |
 | `components/SettingsDialog.vue` | 设置弹窗：刷新间隔（`REFRESH_OPTIONS`）、隐藏时暂停、并发、超时、缓存、快照保留天数、低余额默认阈值（普通/中转站）、每日预算（按单位）、骤降与连续失败告警、通知开关与每日上限、积分折算率、开机自启（显示系统真实状态）、备份导入导出、打开数据目录 | 保存走 `save-settings`（`emit('save', patch)` 返回 Promise），父组件负责回灌与提示 |
-| `components/ThemeView.vue` | 主题外观页：14 套主题（经典深/浅 + 跟随系统 + 6 方向 × 深/浅）、内置与自定义背景选择、适配方式、暗化、模糊、卡片半透明、玻璃效果参数 | 主题变更要同时处理背景图（`backgroundForTheme`）与 `localStorage['panel-theme']`；改主题列表必须同步 `app/resources/backgrounds/` 与 `主题/` |
+| `components/ThemeView.vue` | 主题外观页：14 套主题（经典深/浅 + 跟随系统 + 6 方向 × 深/浅）、内置与自定义背景选择、适配方式、暗化、模糊、卡片半透明、玻璃效果参数 | 主题变更要同时处理背景图（`backgroundForTheme`）、`styles/variables.css` 与 `localStorage['panel-theme']`；`主题/` 已于 2026-10-03 删除，**不要再引用** |
 | `components/UsageStats.vue` | 每日使用状况页：日期切片表格（含停机标记与悬浮说明）、日历热力图（`UsageCalendar`）、导出 CSV、「今日消耗最多」（先折算成金额再比）、余额耗尽预估、进入数据校正入口 | 「今日消耗最多」主进程已按同一权重排序，这里再算一遍权重兜底 |
 | `components/UsageCalendar.vue` | 日历热力图：按日消耗着色、点击某天 → `select-day` | 被 `UsageStats` 嵌入 |
 | `components/PlatformUsage.vue` | 平台用量页：按平台 × 单位聚合的消耗与对比图；**跨单位统一折算成金额比较**（积分按折算率、美元按实时汇率），展示仍用原值；积分合计卡只在存在积分型单位时显示 | 折算入口唯一：`@shared/cost.ts` 的 `creditCny()`，非积分单位返回 null → 界面留空 |
@@ -287,19 +285,17 @@ api-show/
 | `docs/架构设计-时序图.mermaid` | 启动 / 刷新 / 保存账号等关键时序（Mermaid 源） | 同上 |
 | `docs/PRD.md` | 产品需求文档：术语、产品定义、需求池（P0/P1/P2）、UI 线框、数据模型、待确认问题、非功能要求、一期不做的事 | **落盘字段命名以它的第 5 节为准**；历史文档 |
 | `docs/项目完整计划书.md` | 完整计划书与技术细节：路线图、技术栈与版本锁定、总体架构、完整目录结构、数据模型、适配器详解、数据层、IPC 清单、查询引擎、安全设计、二期能力、错误码总表、测试验收、风险 | 综合索引类文档，查"某个能力在哪实现"很快；历史文档 |
-| `docs/主题设计指南.md` | 交给设计类 AI 的主题设计说明：机制（只输出 CSS 变量）、必须输出的变量清单、设计约束、提示词模板、可选方向、交付与接入、当前默认主题 | **新增主题的入口文档**；与 `styles/variables.css`、`主题/overview.md` 配套 |
+| `docs/主题设计指南.md` | 交给设计类 AI 的主题设计说明：机制（只输出 CSS 变量）、必须输出的变量清单、设计约束、提示词模板、可选方向、交付与接入、当前默认主题 | **新增主题的入口文档**；与 `styles/variables.css` 配套（原 `主题/overview.md` 已随 `主题/` 删除） |
 | `docs/剩余开发规划.md` | 剩余开发规划：已拍板的 5 件事、一期收尾、二期实施顺序、二期第一刀方案、下一步动作 | 规划类，做完一项应回来更新/划掉 |
 | `docs/代码审查报告-死代码与冗余.md` | 渲染层/通用死代码与冗余审查报告（含整改执行记录、真实 Bug、清理动作清单） | 历史审查记录；**结论有些已过期**，引用前先 grep 核实 |
 | `docs/代码审查报告-主进程与脚本-死代码与优化.md` | 主进程 / shared / scripts 的死代码、冗余、重复实现、功能优化建议与 Top 10 行动清单 | 同上，属历史记录 |
 
-### 3.9 主题/、memory/、归档/
+### 3.9 memory/、归档/
+
+> **`主题/` 已于 2026-10-03 整体删除**（原文件：`api-balance-themes.css`、`theme-preview.html`、`overview.md`、`归档/trae.css`，均为未纳入 Git 的本地交付物）。主题真源现在只剩 `app/src/renderer/src/styles/variables.css`（见 §3.6）与内置背景图 `app/resources/backgrounds/`（见 §3.3）；**不要再往 `主题/` 写任何东西**。
 
 | 路径 | 用途 | 备注 |
 |---|---|---|
-| `主题/api-balance-themes.css` | **主题主交付物**：12 个主题块（6 方向 × 浅/深），每块 36 个变量全给值且逐行中文注释，另含 9 个平台品牌色 | 是 `styles/variables.css` 里主题变量的来源版本；改主题配色时**两边要对齐**（应用实际读的是 `variables.css`） |
-| `主题/theme-preview.html` | 可点选切换的实机预览：标题栏、侧边导航、余额卡片、冻结首列表格、日历热力图、柱状图、进度条、弹窗表单，全部只吃变量 | 用于验证色板在真实界面里的表现；调完配色跑一遍看 |
-| `主题/overview.md` | 主题交付说明：交付物清单、主题 slug 对应表（6 方向 × 浅/深）、对比度实测达成情况、层级差、禁用纯黑纯白等约束 | 与 `docs/主题设计指南.md` 配套；新增主题要在这里补 slug 与对比度实测 |
-| `主题/归档/trae.css` | 早期单主题试验稿，用旧 slug（`[data-theme="deep-space"]`，**不带 `-dark`/`-light` 后缀**），与现行 `variables.css` 的 `deep-space-dark` / `deep-space-light` 命名不一致 | **不参与构建**，仅存档；不要再从它接主题。这也说明主题 slug 经历过一次"加深浅后缀"的改名 |
 | `memory/2026-09-08.md` | 开发日志：一期进度盘点、`query.ts` 缺 import 的修复、全部测试通过记录、启动冒烟结论（正确启动方式） | 过程记录，**`.gitignore` 已忽略、不推送公开仓库**；排障时可回溯当时的验证方法 |
 | `memory/2026-09-09.md` | 开发日志（49KB，信息量最大）：**打包后 CSS 全失效的根因与修复**（asar 内验证方法可复用）、UI 视觉重做、各平台抓包实测结论 | 排查"打包后样式/交互异常"先读这一篇；抓包结论是适配器字段路径的来源 |
 | `归档/diag-renderer.js` | 一次性诊断脚本：以 `file://` 加载 `out/renderer/index.html`，打印渲染进程 console，用来确认打包产物里 JS/CSS 是否生效 | 按项目规则从源码目录移入归档；需要时手动 `electron 归档/diag-renderer.js` 运行（注意里面用的相对路径按原位置写，移动后需自行调整） |
@@ -373,11 +369,11 @@ app/package.json (main: out/main/index.js)
 | 新增设置项 | `shared/types.ts` 的 `Settings` + `shared/constants.ts` 的 `DEFAULT_SETTINGS` + `src/main/store.ts` 的 `normalizeSettings` + `SettingsDialog.vue` 表单项（四处） |
 | 新增 IPC 通道 | 见 4.2 的四处流程 |
 | 新增页面/视图 | `Sidebar.vue`（`SidebarView` + 导航项）→ `App.vue`（import + `v-else-if` 分支）→ 新组件放 `components/` |
-| 新增主题 | `styles/variables.css` 加 `[data-theme='xxx']` 块 → `app/resources/backgrounds/`（内置图放 `<slug>.png`）→ `ThemeView.vue` 主题列表 → `主题/api-balance-themes.css` 与 `主题/overview.md` 同步 |
+| 新增主题 | `styles/variables.css` 加 `[data-theme='xxx']` 块 → `app/resources/backgrounds/`（内置图放 `<slug>.png`）→ `ThemeView.vue` 主题列表 → `docs/主题设计指南.md` 同步 |
 | 改刷新 / 缓存 / 并发 / 超时 | `scheduler.ts`（间隔由 `ipc.ts` 的 `SETTINGS_SAVE` 热重启）、`query.ts`（缓存）、`http.ts`（超时由 store 同步 `setDefaultTimeoutMs`） |
 | 改每日消耗口径 | `usage.ts`（主逻辑）+ 同时核对 `ipc.ts` 的 `CORRECTION_APPLY`（`dayBalance` 用同款账目函数与同宽窗口自校准），否则"改了某天但数字对不上" |
 | 改登录/续期 | `browser/index.ts`（登录抓取）与 `renewal.ts`（续期配方）**必须共用同一 `LOGIN_RULES[*].partitionHost`** |
-| 改 UI 配色 | `styles/variables.css`（应用实际读取）；`主题/` 是交付物与预览，要同步 |
+| 改 UI 配色 | `styles/variables.css` 是唯一真源（应用实际读取）；`主题/` 已于 2026-10-03 删除，配色不再有第二份交付物 |
 | 用户可见功能变化 | 同步 `README.md`、`docs/使用说明.md`、`components/HelpPane.vue`、`CHANGELOG.md`、本手册 |
 
 ---
@@ -440,6 +436,15 @@ npx asar extract app/dist/win-unpacked/resources/app.asar asar-chk
 | `package.json` 的 `productName` | 改了 → 老用户数据目录"找不到" |
 | `crypto.ts` 的降级方案 | 误当"加密" → 密钥实际未受保护，必须保留界面黄色横幅 |
 
+### 待清理 / 待修复（技术债，改到相关文件时一并处理）
+
+| 项 | 位置 | 说明与建议处理方式 |
+|---|---|---|
+| 返回类型不严谨 | `app/src/shared/cost.ts` → `hasCreditRate()` | 声明返回 `boolean`，但 `typeof x === 'number' && ... && x > 0` 短路时会返回 `null`（实际类型为 `number \| null \| boolean`）。**下次改动 cost 相关逻辑时一并修正**：改为 `return typeof x === 'number' && x > 0;` |
+| 无引用的历史资源 | `app/resources/tray-alert.png` | `tray.ts` 统一只用 `icon.png`，该文件仅被 `package.json` 的 `extraResources` 拷贝，**代码 0 引用**。下次打包/清理时决定「删除并同步 `extraResources`」或「接线做失败状态图标」 |
+| 归档脚本相对路径失效 | `归档/diag-renderer.js` | 从 `scripts/` 移入 `归档/` 后，内部 `path.join(__dirname, '..', 'out', ...)` 指向错误位置；下次要用时改成 `path.join(__dirname, '..', 'app', 'out', ...)` |
+| 已删除目录的残留引用 | 文档中的 `主题/` | `主题/` 已于 2026-10-03 删除。历史文档（`docs/`、`CHANGELOG.md`、`memory/`）里的引用属历史记录，**不必回改**；**现行文档与代码里若再出现 `主题/` 视为错误** |
+
 ### 修改后必须同步本手册（三项缺一不可）
 
 1. 更新受影响的「三、文件用途清单」条目（新增/删除/重命名/职责变化都要改）；
@@ -452,4 +457,5 @@ npx asar extract app/dist/win-unpacked/resources/app.asar asar-chk
 
 | 日期 | 版本 | 改动摘要 | 涉及文件 |
 |---|---|---|---|
+| 2026-10-03 | 1.8.0 | ① 删除 `主题/` 目录（用户确认；4 个未纳入 Git 的本地交付物：`api-balance-themes.css`、`theme-preview.html`、`overview.md`、`归档/trae.css`）；② 手册同步：移除 `主题/` 树节点与条目、修正内置背景图为 14 张、新增「待清理 / 待修复（技术债）」章节（`cost.ts` 返回类型、`tray-alert.png` 无引用、`归档/diag-renderer.js` 相对路径）；③ **未改任何代码/资源，未升版本、未打包** | `MAINTENANCE.md`；`主题/`（删除） |
 | 2026-10-03 | 1.8.0 | 建立本维护手册（首次）：覆盖软件简介、目录结构总览、逐文件用途清单（主进程 / 适配器 / 预加载 / 渲染组件 / 共享层 / 文档 / 主题等）、启动链路与 IPC 数据流、数据文件清单、改动安全守则与高风险清单；内置背景图条目校正为 14 张并逐文件列名 | `MAINTENANCE.md`（新增） |
