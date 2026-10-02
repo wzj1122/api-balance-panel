@@ -1,5 +1,6 @@
 import type {
   AccountInput,
+  AccountType,
   AccountView,
   AppInfo,
   BalanceRow,
@@ -53,6 +54,10 @@ export const IPC = {
   ACCOUNT_RENEW: 'account:renew',
   /** invoke：卡片上的一键重新登录（打开该平台的登录窗口，成功后自动写回账号） */
   ACCOUNT_RELOGIN: 'account:relogin',
+  /** invoke：检测某账号是否还有「另一个方式」可添加（MiMo 余额 ⇄ TokenPlan，只读） */
+  ACCOUNT_SIBLING_CHECK: 'account:sibling-check',
+  /** invoke：一键添加「另一个方式」的账号（复用同一份登录凭据，不需要再登录） */
+  ACCOUNT_SIBLING_ADD: 'account:sibling-add',
   /** invoke：读某账号的校正视图（账本 + 影响条数 + 快照对照） */
   CORRECTION_VIEW: 'correction:view',
   /** invoke：新增校正（改某天用量 / 平移 / 回退到某次快照） */
@@ -168,6 +173,15 @@ export interface PanelApi {
 
   /** 一键重新登录（卡片按钮）：按账号类型打开对应登录窗口，登录成功后自动写回并刷新 */
   reloginAccount(id: string): Promise<{ ok: boolean; cookie?: string; error?: string; canRenew?: boolean; renewHint?: string }>
+
+  /**
+   * 检测某账号是否还有「另一个方式」可添加（MiMo 余额 ⇄ TokenPlan 共用同一登录状态）。
+   * 只读：会拿该账号的凭据去平台查一次"另一个方式"的数据是否存在，不创建任何账号。
+   */
+  checkAccountSibling(payload: { id: string }): Promise<{ type: AccountType | null; name: string; available: boolean; reason: string }>
+
+  /** 一键添加「另一个方式」的账号：主进程复用同一份登录凭据，用户不需要再登录一次 */
+  addAccountSibling(payload: { id: string }): Promise<{ ok: boolean; id: string; name: string; type: AccountType; error?: string }>
 
   /** 读某账号的校正视图（账本条目 + 每条影响的快照数 + 快照对照点） */
   correctionView(payload: { accountId: string; limit?: number }): Promise<CorrectionView>

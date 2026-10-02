@@ -269,6 +269,46 @@ const warnedExpiry = new Map<string, number>()
 const EXPIRY_WARN_MS = 15 * 60 * 1000
 
 /**
+ * 「到期时间未知」时的兜底续期限流（2026-10-03 新增）。
+ *
+ * 小米 MiMo 的会话是 `api-platform_serviceToken` 这种 **session cookie**（没有 expirationDate），
+ * 抓到的 Cookie 也不是 JWT（解不出 exp），所以 `msUntilExpiry` / `sessionExpiryMs` 双双返回 null。
+ * 旧逻辑在这种情况下要求"必须存过会话材料（session_enc 非空）才续"，而用户那张 2026-09-09 建的
+ * 余额卡 session_enc 一直是 null —— 结果**永远不续期**，只能手点按钮，这正是用户反馈的
+ * "明明可以自动续期，非要我点"。
+ *
+ * 现在：到期时间完全未知也照样续一次，但按这个间隔限流，避免每 5 分钟开一次隐藏窗口。
+ */
+const UNKNOWN_EXPIRY_RENEW_MS = 6 * 60 * 60 * 1000
+const lastBlindRenew = new Map<string, number>()
+
+/**
+ * 「现在要不要续期」的判定（抽成纯函数，便于回归测试）。
+ *
+ * 这段判断以前写死在 keepAliveSessions 里，且最后一个分支是
+ * `Boolean(store.getSession(acc))` —— 对上小米那种"没有到期时间"的账号恒为 false，
+ * 于是自动续期形同虚设（2026-10-03 修）。
+ *
+ * @param left         凭据（token）距过期还有多久；null = 读不出来
+ * @param sessionLeft  会话 Cookie 距过期还有多久；null = 读不出来
+ * @param lastBlindAt  上一次"到期时间未知"兜底续期的时刻（0 = 从没续过）
+ * @returns renew 是否现在续期；blind=true 表示这是"到期时间未知"的兜底续期（调用方需要限流记账）
+ */
+export function decideRenewal(p: {
+  left: number | null
+  sessionLeft: number | null
+  lastBlindAt: number
+  now: number
+  maxAgeMs: number
+  blindIntervalMs?: number
+}): { renew: boolean; blind: boolean } {
+  const blindIntervalMs = p.blindIntervalMs ?? UNKNOWN_EXPIRY_RENEW_MS
+  if (p.left !== null) return { renew: p.left < p.maxAgeMs, blind: false }
+  if (p.sessionLeft !== null) return { renew: p.sessionLeft < p.maxAgeMs, blind: false }
+  return { renew: p.now - p.lastBlindAt > blindIntervalMs, blind: true }
+}
+
+/**
  * 扫描所有登录型账号，把「即将过期 / 已过期 / 从未记录过期时间」的凭据续一遍。
  * 由 main/index.ts 定时调用：**窗口隐藏或最小化时同样运行**（保活就是要一直跑）。
  *
@@ -308,14 +348,21 @@ export async function keepAliveSessions(maxAgeMs = 60 * 60 * 1000): Promise<numb
      * - token 到期时间已知（能解出 JWT exp）→ 按它判断；
      * - token 到期时间未知（商汤的 token 解不出 exp）→ 退回用**会话到期时间**判断，
      *   这样"会话还剩不到 1 小时"时才去续一次（此刻平台还能换出新 token），
-     *   而不是每 20 分钟白跑一趟隐藏窗口。
+     *   而不是每 20 分钟白跑一趟隐藏窗口；
+     * - 两者都未知（小米这类 session cookie）→ **兜底照样续**，但限流成 6 小时一次。
+     *
+     * 注意这里**不能**再用"存过会话材料就续"当条件：续期成功后 session_enc 一定有值，
+     * 那样会变成每 5 分钟开一次隐藏窗口，白耗资源。判定本身见 decideRenewal（有回归测试）。
      */
-    const needRenew = left !== null
-      ? left < maxAgeMs
-      : sessionLeft !== null
-        ? sessionLeft < maxAgeMs
-        : Boolean(store.getSession(acc))
-    if (!needRenew) continue
+    const decision = decideRenewal({
+      left,
+      sessionLeft,
+      lastBlindAt: lastBlindRenew.get(acc.id) ?? 0,
+      now: Date.now(),
+      maxAgeMs
+    })
+    if (!decision.renew) continue
+    if (decision.blind) lastBlindRenew.set(acc.id, Date.now())
     try {
       if (await renewForAccount(acc, 'startup')) renewed++
     } catch (e) {

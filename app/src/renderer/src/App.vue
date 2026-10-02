@@ -19,7 +19,7 @@ import HelpPane from '@renderer/components/HelpPane.vue'
 import UsageReportView from '@renderer/components/UsageReportView.vue'
 import BudgetBar from '@renderer/components/BudgetBar.vue'
 import OnboardingGuide from '@renderer/components/OnboardingGuide.vue'
-import { backgroundData, backgroundForTheme, listDailyUsage, reloginAccount, renewAccount, setDemoMode } from '@renderer/api/ipc'
+import { backgroundData, backgroundForTheme, checkAccountSibling, addAccountSibling, listDailyUsage, reloginAccount, renewAccount, setDemoMode } from '@renderer/api/ipc'
 import { useConfirm } from '@renderer/composables/useConfirm'
 import { resolveTheme } from '@renderer/utils/theme'
 
@@ -52,9 +52,10 @@ const budgetRows = ref<{ unit: string; today: number | null; remaining: number |
 const demoOn = ref(false)
 /** 新手引导是否显示 */
 const showOnboard = ref(false)
-/** 正在静默续期的账号 id 集合（卡片按钮态） */
-const renewingIds = ref<Set<string>>(new Set())
-/** 正在「重新登录」的账号 id 集合（卡片按钮态） */
+/**
+ * 正在「点击登录」处理的账号 id 集合（卡片上那个大按钮的处理中态）。
+ * 2026-10-03 起：原来的「静默续期」小按钮勾掉了，续期也走这条统一入口。
+ */
 const reloggingIds = ref<Set<string>>(new Set())
 /** 续期 / 重新登录的结果提示（顶部小字，几秒后自动消失） */
 const renewMsg = ref('')
@@ -76,27 +77,41 @@ function openCorrection(accountId?: string): void {
 }
 
 /**
- * 卡片上的一键「重新登录」：打开该平台的登录窗口 → 登录成功自动写回账号 → 立即刷新卡片。
+ * 卡片上的「点击登录」= 唯一入口，逻辑统一在这里：
  *
- * 为什么要它（用户 2026-09-22 要求）：有些平台的会话是**绝对到期、无法续期**的
- * （商汤实测 3 小时），到期后必然要重新登录；以前得「点编辑 → 点登录 → 再点保存」，
- * 现在卡片上点一下就行。所有登录型平台（Xiaomi MIMO / 套餐 / siliconflow / MiniMax / bigmodel / SenseNova）共用。
+ * 1. **先试静默续期**（`renewAccount`：用分区里/保存的会话换新凭据，不弹窗、不用输密码）；
+ *    能用就直接刷新，用户什么都不用做 —— 这正是用户 2026-10-03 的要求：
+ *    "明明可以自动续期，别非得让我点按钮"。
+ * 2. 续不上（或该平台不支持续期）才打开登录窗口，登录完成后自动保存并刷新。
+ *
+ * 以前卡片上有 🔑「重新登录」和 ↻「续期登录」两个小图标，用户得自己判断该点哪个；
+ * 现在两个小按钮都删了，只剩这一个动作，判断交给程序。
  */
 async function onRelogin(id: string): Promise<void> {
   const acc = accounts.value.find((a) => a.id === id)
+  const name = acc?.name ?? '账号'
   const next = new Set(reloggingIds.value)
   next.add(id)
   reloggingIds.value = next
-  renewMsg.value = '已打开登录窗口：请在弹出的窗口里完成登录，成功后会自动保存并刷新'
   try {
+    renewMsg.value = name + '：正在尝试自动续期…'
+    const rn = await renewAccount(id)
+    if (rn.ok && rn.data?.ok) {
+      renewMsg.value = name + ' 已自动续期成功，不需要重新登录' +
+        (rn.data.expiresAt ? '（新凭据有效至 ' + new Date(rn.data.expiresAt).toLocaleString('zh-CN') + '）' : '')
+      await refreshOne(id)
+      return
+    }
+    // 续不上：直接把登录窗口打开（不用用户再去别处找入口）
+    renewMsg.value = name + '：自动续期没成功，已打开登录窗口——登录完成会自动保存并刷新'
     const r = await reloginAccount(id)
     if (r.ok && r.data?.ok) {
       const hint = r.data.renewHint ? '（' + r.data.renewHint + '）' : ''
-      renewMsg.value = (acc?.name ?? '账号') + ' 重新登录成功' + hint
+      renewMsg.value = name + ' 登录成功' + hint
       await refreshOne(id)
     } else {
       const why = r.ok ? r.data?.error || '未获取到凭据' : r.error
-      renewMsg.value = '重新登录未完成：' + why
+      renewMsg.value = '登录未完成：' + why
     }
   } finally {
     const done = new Set(reloggingIds.value)
@@ -107,41 +122,73 @@ async function onRelogin(id: string): Promise<void> {
 }
 
 /**
- * 静默续期登录：用已保存的会话自动换新凭据（不弹窗、不需要密码）。
- * 成功后立刻刷一次该账号；失败说明会话真的失效了，提示去重新登录。
+ * 「另一个方式」自动检测（用户 2026-10-03 要求）。
+ *
+ * 背景：Xiaomi MIMO 的余额与 TokenPlan 是两个账号类型，但**共用同一份登录状态**。
+ * 以前只在「添加账号」弹窗里有个勾选框（添加时才看得到），用户早就加过余额卡、后来才开的
+ * 套餐订阅，就永远收不到提醒。现在改成：概览页自动检测 + 一键添加。
  */
-async function onRenew(id: string): Promise<void> {
-  const acc = accounts.value.find((a) => a.id === id)
-  const next = new Set(renewingIds.value)
-  next.add(id)
-  renewingIds.value = next
-  renewMsg.value = ''
+const siblingHint = ref<{ accountId: string; type: AccountType; label: string; name: string } | null>(null)
+const siblingBusy = ref(false)
+/** 已检测过的账号（同一次运行只查一次，避免每次刷新都打接口） */
+const siblingChecked = new Set<string>()
+/** 用户点过「以后再说」的账号 */
+const siblingMuted = ref<Set<string>>(new Set())
+
+async function checkSibling(): Promise<void> {
+  if (demoOn.value) return
+  const list = accounts.value.filter((a) => !a.deleted_at)
+  const types = new Set(list.map((a) => a.type))
+  // 两个都有了就不用提醒
+  if (types.has('mimo') && types.has('mimo-plan')) {
+    siblingHint.value = null
+    return
+  }
+  const src = list.find((a) => (a.type === 'mimo' || a.type === 'mimo-plan') && !siblingChecked.has(a.id) && !siblingMuted.value.has(a.id))
+  if (!src) return
+  siblingChecked.add(src.id)
   try {
-    const r = await renewAccount(id)
-    if (!r.ok) {
-      renewMsg.value = '续期失败：' + r.error
-      return
-    }
-    if (r.data.ok) {
-      renewMsg.value =
-        (acc?.name ?? '账号') +
-        ' 续期成功' +
-        (r.data.expiresAt ? '，新凭据有效至 ' + new Date(r.data.expiresAt).toLocaleString('zh-CN') : '')
-      await refreshOne(id)
-    } else if (r.data.needLogin) {
-      // 会话真的失效了：直接把编辑窗打开，用户只要点一下「登录并获取」即可（不用再找入口）
-      renewMsg.value = '会话已失效，已打开登录窗口——点「登录并获取」重新登录一次即可'
-      openEdit(id)
-    } else {
-      renewMsg.value = '续期失败：' + (r.data.error || '未知原因')
-    }
-  } finally {
-    const done = new Set(renewingIds.value)
-    done.delete(id)
-    renewingIds.value = done
-    setTimeout(() => { renewMsg.value = '' }, 6000)
+    const r = await checkAccountSibling(src.id)
+    if (!r.ok || !r.data?.available || !r.data.type) return
+    siblingHint.value = { accountId: src.id, type: r.data.type, label: r.data.name, name: src.name }
+  } catch {
+    // 检测失败不打扰用户（下次启动再试）
+    siblingChecked.delete(src.id)
   }
 }
+
+/** 一键添加「另一个方式」：主进程直接复用这张卡的登录凭据，不用再登录一次 */
+async function onSiblingAdd(): Promise<void> {
+  const hint = siblingHint.value
+  if (!hint || siblingBusy.value) return
+  siblingBusy.value = true
+  try {
+    const r = await addAccountSibling(hint.accountId)
+    if (r.ok && r.data?.ok) {
+      siblingHint.value = null
+      showBanner('已添加「' + r.data.name + '」卡片（共用同一登录状态，无需重新登录）')
+      await loadAll()
+      await refreshAll()
+    } else {
+      showBanner('添加失败：' + (r.ok ? r.data?.error || '未知原因' : r.error))
+    }
+  } finally {
+    siblingBusy.value = false
+  }
+}
+
+function dismissSibling(): void {
+  const hint = siblingHint.value
+  if (hint) {
+    const next = new Set(siblingMuted.value)
+    next.add(hint.accountId)
+    siblingMuted.value = next
+  }
+  siblingHint.value = null
+}
+
+// 账号列表一变（启动 / 保存 / 删除）就顺手检测一次「另一个方式」
+watch(accounts, () => { void checkSibling() }, { deep: false })
 
 // 主题：设置驱动（深色 / 浅色 / 跟随系统 / 设计师主题），写入 data-theme
 // - 深色 / 浅色 = 直接切到对应的经典主题（与「主题外观」页里的「深色（默认）」「浅色（默认）」是同一套）
@@ -417,6 +464,20 @@ async function onSettingsSave(patch: Parameters<typeof saveSettings>[0]) {
             </div>
             <SummaryBar :rows="rows" :total-accounts="accounts.length" />
             <BudgetBar :budgets="settings?.daily_budget ?? {}" :units="budgetRows" />
+            <!-- 「另一个方式」自动检测提醒：MiMo 余额 ⇄ TokenPlan 共用同一登录状态 -->
+            <div v-if="siblingHint" class="banner warn sibling-banner">
+              <span class="sibling-text">
+                检测到「{{ siblingHint.name }}」这张卡上还有
+                <strong>{{ siblingHint.type === 'mimo-plan' ? 'Xiaomi MIMO TokenPlan（用量 / 额度 / 有效期）' : 'Xiaomi MIMO 余额（现金 / 赠送）' }}</strong>
+                可用，但面板里还没有对应卡片。两者共用同一个登录状态，点一下就能加上，不用重新登录。
+              </span>
+              <span class="sibling-ops">
+                <button class="btn primary" type="button" :disabled="siblingBusy" @click="onSiblingAdd">
+                  {{ siblingBusy ? '添加中…' : '一键添加' }}
+                </button>
+                <button class="btn" type="button" :disabled="siblingBusy" @click="dismissSibling">以后再说</button>
+              </span>
+            </div>
             <div class="groups">
               <section v-for="g in groupRows" :key="g.key" class="group">
                 <button class="group-head" type="button" @click="toggleGroup(g.key)">
@@ -433,11 +494,9 @@ async function onSettingsSave(patch: Parameters<typeof saveSettings>[0]) {
                       :key="row.accountId"
                       :row="row"
                       :refreshing="refreshingIds.has(row.accountId)"
-                      :renewing="renewingIds.has(row.accountId)"
                       :relogging="reloggingIds.has(row.accountId)"
                       :forecast="forecastMap?.get(row.accountId) ?? null"
                       @refresh="refreshOne"
-                      @renew="onRenew"
                       @relogin="onRelogin"
                       @correct="openCorrection(row.accountId)"
                       @edit="openEdit"
@@ -627,6 +686,27 @@ async function onSettingsSave(patch: Parameters<typeof saveSettings>[0]) {
   grid-auto-rows: max-content;
   gap: var(--gap);
   align-content: start;
+}
+
+/* 「另一个方式」自动检测提醒条（MiMo 余额 ⇄ TokenPlan） */
+.sibling-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.sibling-text {
+  min-width: 0;
+  flex: 1 1 320px;
+  line-height: 1.5;
+}
+
+.sibling-ops {
+  display: flex;
+  gap: 8px;
+  flex: none;
 }
 
 /* 卡片列表过渡（新增/更新时淡入上浮，排序平滑移动） */

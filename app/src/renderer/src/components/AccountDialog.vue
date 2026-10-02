@@ -138,6 +138,10 @@ function initForm() {
   Object.keys(errors).forEach((k) => delete errors[k])
   reveal.value = false
   loginStatus.value = ''
+  // 复选框状态必须每次打开重置：以前它只增不减，勾过一次之后每次打开都是勾上的，
+  // 会在用户没注意的情况下多建一个账号（2026-10-03 修）
+  addBoth.value = false
+  saveHint.value = ''
 }
 
 watch(

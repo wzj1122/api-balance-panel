@@ -1,6 +1,7 @@
 import type { PanelApi } from '@shared/ipc'
 import type {
   AccountInput,
+  AccountType,
   AccountView,
   AppInfo,
   BalanceRow,
@@ -141,6 +142,30 @@ export function renewAccount(id: string): Promise<RpcResult<{ ok: boolean; error
 /** 一键重新登录（卡片按钮）：打开该平台的登录窗口，成功后主进程自动写回账号 */
 export function reloginAccount(id: string): Promise<RpcResult<LoginResult>> {
   return rpc((a) => a.reloginAccount(id))
+}
+
+/** 「另一个方式」检测结果（MiMo 余额 ⇄ TokenPlan 共用同一登录状态） */
+export interface SiblingCheck {
+  /** 另一个方式的账号类型；null = 该平台没有"另一个方式" */
+  type: AccountType | null
+  /** 另一个方式的显示名 */
+  name: string
+  /** 平台上确实有这份数据、且面板里还没添加 → true */
+  available: boolean
+  /** available=false 时的原因（排查用） */
+  reason: string
+}
+
+/** 检测某个账号是否还有「另一个方式」可添加（只读，不创建账号） */
+export function checkAccountSibling(id: string): Promise<RpcResult<SiblingCheck>> {
+  return rpc((a) => a.checkAccountSibling({ id }))
+}
+
+/** 一键添加「另一个方式」：主进程直接复用这张卡的登录凭据，无需再次登录 */
+export function addAccountSibling(
+  id: string
+): Promise<RpcResult<{ ok: boolean; id: string; name: string; type: AccountType; error?: string }>> {
+  return rpc((a) => a.addAccountSibling({ id }))
 }
 
 // ---------- 数据校正 ----------

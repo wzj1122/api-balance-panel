@@ -1,8 +1,8 @@
 import { app, ipcMain, Notification, session, shell } from 'electron'
-import { LOGIN_RULES, MIMO_BALANCE_URL, MIMO_LOGIN_URL, MINIMAX_LOGIN_URL, SENSENOVA_CONSOLE_URL, SILICONFLOW_LOGIN_URL, ZHIPU_LOGIN_URL, loginPartition } from '../shared/constants'
+import { LOGIN_RULES, MIMO_BALANCE_URL, MIMO_LOGIN_URL, MINIMAX_LOGIN_URL, PROVIDER_META, SENSENOVA_CONSOLE_URL, SILICONFLOW_LOGIN_URL, ZHIPU_LOGIN_URL, loginPartition } from '../shared/constants'
 import { IPC } from '../shared/ipc'
 import type { RefreshPayload } from '../shared/ipc'
-import type { Account, AccountInput, AppInfo, CorrectionView, CredentialSession, MonitorInput, ReportPeriod, Settings, Snapshot, LogLevel, KeyVaultInput } from '../shared/types'
+import type { Account, AccountInput, AccountType, AppInfo, CorrectionView, CredentialSession, MonitorInput, ReportPeriod, Settings, Snapshot, LogLevel, KeyVaultInput } from '../shared/types'
 import { applyAutoStart, getAutoStartStatus } from './autostart'
 import { getAdapter } from './adapters'
 import { backgroundData, backgroundForTheme, importBackground, listBackgrounds, removeBackground } from './bgstore'
@@ -357,7 +357,12 @@ export function registerIpc(): void {
     })
   })
 
-  // 手动续期登录（卡片上的「续期登录」按钮）
+  /**
+   * 手动续期登录。
+   *
+   * 2026-10-03 起卡片上的 ↻ 小按钮删掉了：这个通道现在由卡片上那个大号「点击登录」框调用
+   * （先试静默续期、续不上再开登录窗口），保留是因为它仍然有用——用户点一下就能免密码续上。
+   */
   wrap(IPC.ACCOUNT_RENEW, async (payload) => {
     const p = asRecord(payload) as { id?: string }
     const id = typeof p.id === 'string' ? p.id : ''
@@ -380,6 +385,80 @@ export function registerIpc(): void {
     }
     invalidateCache(id)
     return { ok: true, error: '', needLogin: false, expiresAt: after?.token_expires_at ?? null }
+  })
+
+  /**
+   * MiMo「另一个方式」检测 / 一键添加（用户 2026-10-03 要求）。
+   *
+   * 「Xiaomi MIMO」与「Xiaomi MIMO TokenPlan」是两个账号类型，但**共用同一份登录 Cookie**。
+   * 用户往往是先加了余额卡、很久以后才开通套餐（或反过来），这时面板不会主动提醒。
+   * 现在概览页会自动检测一次：只要平台上确实有"另一个方式"的数据、而面板里还没加，
+   * 就提示用户一键添加（直接复用同一份凭据，不需要再登录一次）。
+   */
+  const siblingTypeOf = (type: string): AccountType | null => {
+    if (type === 'mimo') return 'mimo-plan'
+    if (type === 'mimo-plan') return 'mimo'
+    return null
+  }
+
+  wrap(IPC.ACCOUNT_SIBLING_CHECK, async (payload) => {
+    const id = typeof (asRecord(payload) as { id?: string }).id === 'string' ? (asRecord(payload) as { id: string }).id : ''
+    if (!id) throw new Error('缺少账号 id')
+    const account = store.getAccount(id)
+    if (!account) throw new Error('账号不存在')
+    const type = siblingTypeOf(account.type)
+    if (!type) return { type: null, name: '', available: false, reason: '该平台没有"另一个方式"' }
+    const name = PROVIDER_META[type].label
+    if (store.listAccounts().some((a) => a.type === type && !a.deleted_at)) {
+      return { type, name, available: false, reason: '面板里已经添加过' }
+    }
+    const secret = store.getSecret(account)
+    if (!secret) return { type, name, available: false, reason: '这张卡还没有登录凭据' }
+    // 直接跑一次"另一个方式"的适配器：能查出数就说明平台上确实有这份数据
+    let available = false
+    let reason = ''
+    try {
+      const row = await getAdapter(type)(
+        { id: 'sibling-probe', type, name: 'sibling-probe' } as Account,
+        { getSecret: () => secret }
+      )
+      // 余额卡：0 元余额不值得再提醒；套餐卡：适配器查不到生效套餐会抛错，走到这里就已经有套餐
+      available = type === 'mimo' ? (row.remaining ?? 0) > 0 : row.ok
+      if (!available) reason = type === 'mimo' ? '平台上余额为 0' : '平台上没有生效中的套餐'
+    } catch (e) {
+      reason = '平台上没查到对应数据（' + (e as { code?: string }).code + '）'
+    }
+    logger.info(`[ipc] 「另一个方式」检测：${account.name} → ${name} ${available ? '可添加' : '不可添加（' + reason + '）'}`)
+    return { type, name, available, reason }
+  })
+
+  wrap(IPC.ACCOUNT_SIBLING_ADD, async (payload) => {
+    const id = typeof (asRecord(payload) as { id?: string }).id === 'string' ? (asRecord(payload) as { id: string }).id : ''
+    if (!id) throw new Error('缺少账号 id')
+    const source = store.getAccount(id)
+    if (!source) throw new Error('账号不存在')
+    const type = siblingTypeOf(source.type)
+    if (!type) throw new Error('该平台没有「另一个方式」')
+    if (store.listAccounts().some((a) => a.type === type && !a.deleted_at)) {
+      throw new Error('已经添加过「' + PROVIDER_META[type].label + '」了')
+    }
+    const secret = store.getSecret(source)
+    if (!secret) throw new Error('这张卡还没有登录凭据，请先登录一次')
+    const meta = PROVIDER_META[type]
+    const created = store.saveAccount({
+      name: (source.name || meta.label).slice(0, 7) + '·' + (type === 'mimo' ? '余额' : '套餐'),
+      type,
+      enabled: true,
+      threshold: meta.defaultThreshold,
+      unit: meta.defaultUnit,
+      secret
+    })
+    // 续期材料（会话 Cookie）一起带过去：小米两张卡共用同一份会话，续期才能都生效
+    const session = store.getSession(source)
+    if (session) store.saveCredential(created.id, { session, tokenExpiresAt: source.token_expires_at ?? null })
+    invalidateCache(created.id)
+    logger.info(`[ipc] 已一键添加「另一个方式」：${created.name}（${created.type}，复用 ${source.name} 的登录凭据）`)
+    return { ok: true, id: created.id, name: created.name, type: created.type }
   })
 
   // ---------- 数据校正（手动修正历史数据） ----------

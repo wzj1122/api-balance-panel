@@ -12,9 +12,7 @@ const props = defineProps<{
   refreshing?: boolean
   /** 每日统计同源的账号数据：余额耗尽预估 + 累计总额（进度条分母） */
   forecast?: DailyAccount | null
-  /** 该账号是否正在静默续期 */
-  renewing?: boolean
-  /** 该账号是否正在重新登录（卡片按钮） */
+  /** 该账号是否正在登录（卡片上那个大按钮的处理中态） */
   relogging?: boolean
 }>()
 
@@ -22,9 +20,7 @@ const emit = defineEmits<{
   (e: 'refresh', id: string): void
   (e: 'edit', id: string): void
   (e: 'remove', id: string): void
-  /** 静默续期登录（用保存的会话换新凭据） */
-  (e: 'renew', id: string): void
-  /** 一键重新登录（需要输密码那种，卡片上直接开登录窗口） */
+  /** 卡片上的「点击登录」：先试静默续期，不行再开登录窗口（逻辑统一在 App.vue） */
   (e: 'relogin', id: string): void
   /** 跳到「数据校正」页（带该账号） */
   (e: 'correct', id: string): void
@@ -35,30 +31,25 @@ const adjusted = computed(() => /已手动校正/.test(props.row.note ?? ''))
 
 /**
  * 登录型平台：会话会过期、需要重新登录。
- * 除了 SenseNova / Xiaomi MIMO，siliconflow / MiniMax / bigmodel 也是"登录抓凭据"型，
- * 所以卡片上都给「重新登录」按钮（用户 2026-09-22 要求：基本上所有模型都可能要重登）。
+ * 2026-10-03 用户要求：卡片上不再放「重新登录 / 续期登录」两个小图标按钮，
+ * 统一成一个**大号「点击登录」框**，只在卡片真的处于"需要登录"状态时出现，
+ * 点击后由上层决定「先静默续期、不行再开登录窗口」（见 App.vue 的 onRelogin）。
  */
 const LOGIN_TYPES = new Set<AccountType>(['sensenova', 'mimo', 'mimo-plan', 'siliconflow', 'minimax', 'zhipu'])
-const canRelogin = computed(() => LOGIN_TYPES.has(props.row.type))
-
-/** 支持"静默续期"的平台（只有小米 MiMo 系有会话保活链路；商汤会话 3 小时绝对到期，2026-09-22 起停用续期） */
-const RENEWABLE = new Set<AccountType>(['mimo', 'mimo-plan'])
-const canRenew = computed(() => RENEWABLE.has(props.row.type))
-
-/** 续期按钮状态：正在续期 / 提示文案 */
-const renewing = computed(() => props.renewing === true)
-const renewTitle = computed(() =>
-  renewing.value
-    ? '正在静默续期…'
-    : '续期登录（用已有会话自动换新凭据，不需要重新输密码）'
-)
-
-/** 重新登录按钮状态 */
-const relogging = computed(() => props.relogging === true)
-const reloginTitle = computed(() =>
-  relogging.value
-    ? '正在等待你在登录窗口里完成登录…'
-    : '重新登录（打开这个平台的登录页，登录完成后自动保存并刷新）'
+/**
+ * 卡片是否需要用户去登录：
+ * 登录型平台查询失败，且原因是凭据类（COOKIE_EXPIRED / 返回的不是数据）。
+ * 其它失败（网络不通、平台 5xx）不弹登录框，否则会把用户往登录窗口里带偏。
+ */
+const needsLogin = computed(() => {
+  if (props.row.ok || !LOGIN_TYPES.has(props.row.type)) return false
+  const code = props.row.errorCode
+  return code === 'COOKIE_EXPIRED' || code === 'BAD_JSON'
+})
+const loginHintText = computed(() =>
+  props.relogging
+    ? '正在处理：先尝试自动续期，必要时会打开登录窗口…'
+    : '点一下就会先尝试自动续期；续不上再打开登录页，登录完成自动保存并刷新'
 )
 
 /** 平台品牌色映射（驱动卡片点缀色） */
@@ -370,7 +361,12 @@ onBeforeUnmount(() => {
   </article>
 
   <!-- 失败态 -->
-  <article v-else-if="!row.ok" class="card bad">
+  <article
+    v-else-if="!row.ok"
+    class="card bad"
+    :class="{ 'need-login': needsLogin }"
+    :style="{ '--card-acc': PLATFORM_COLORS[row.type] }"
+  >
     <header class="head">
       <span class="dot-p err"></span>
       <span class="name">{{ row.name }}</span>
@@ -408,17 +404,36 @@ onBeforeUnmount(() => {
         </button>
       </span>
     </header>
-    <div class="fail-box">
-      <span class="badge err">查询失败</span>
-      <svg class="ico" viewBox="0 0 16 16" width="18" height="18">
-        <path
-          fill="currentColor"
-          d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13Zm-.75 3.5h1.5v4.5h-1.5V5Zm0 6h1.5v1.5h-1.5V11Z"
-        />
-      </svg>
-      <span class="fail-reason">{{ row.note || '查询失败' }}</span>
+    <!-- 需要登录：卡片里给一个大号「点击登录」框（取代以前的 🔑 / ↻ 两个小图标按钮） -->
+    <div v-if="needsLogin" class="login-box">
+      <button class="login-big" type="button" :disabled="relogging" @click="emit('relogin', row.accountId)">
+        <svg class="ico" :class="{ spin: relogging }" viewBox="0 0 16 16" width="18" height="18">
+          <path
+            fill="currentColor"
+            d="M10.5 1a4.5 4.5 0 0 0-4.35 3.4L1.5 9.05A1 1 0 0 0 1.2 9.7v3.1c0 .44.36.8.8.8h3.1a1 1 0 0 0 .7-.29l1.2-1.2h1.3a.8.8 0 0 0 .8-.8v-1.3l.85-.85A4.5 4.5 0 1 0 10.5 1Zm1.6 3.9a1.2 1.2 0 1 1 0-2.4 1.2 1.2 0 0 1 0 2.4Z"
+          />
+        </svg>
+        <span class="login-big-text">{{ relogging ? '正在登录…' : '点击登录' }}</span>
+        <span class="login-big-sub">{{ loginHintText }}</span>
+      </button>
+      <div class="login-reason">
+        <span class="badge err">需要登录</span>
+        <span class="login-reason-text">{{ row.note || '登录已过期' }}</span>
+      </div>
     </div>
-    <div v-if="row.errorDetail" class="fail-detail">详情：{{ row.errorDetail }}</div>
+    <template v-else>
+      <div class="fail-box">
+        <span class="badge err">查询失败</span>
+        <svg class="ico" viewBox="0 0 16 16" width="18" height="18">
+          <path
+            fill="currentColor"
+            d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13Zm-.75 3.5h1.5v4.5h-1.5V5Zm0 6h1.5v1.5h-1.5V11Z"
+          />
+        </svg>
+        <span class="fail-reason">{{ row.note || '查询失败' }}</span>
+      </div>
+      <div v-if="row.errorDetail" class="fail-detail">详情：{{ row.errorDetail }}</div>
+    </template>
     <footer class="foot">
       <span class="note"></span>
       <span class="time">{{ fmtAgo(row.ts) }}</span>
@@ -480,38 +495,6 @@ onBeforeUnmount(() => {
             <path
               fill="currentColor"
               d="M8 1.6 15 14H1L8 1.6Zm0 3.9-4.4 7.9h8.8L8 5.5Zm-.8 2.2h1.6v3.4H7.2V7.7Zm0 4.2h1.6v1.6H7.2v-1.6Z"
-            />
-          </svg>
-        </button>
-        <button
-          v-if="canRenew"
-          class="icon-btn"
-          type="button"
-          :title="renewTitle"
-          :disabled="renewing"
-          @click="emit('renew', row.accountId)"
-        >
-          <svg class="ico" :class="{ spin: renewing }" viewBox="0 0 16 16" width="14" height="14">
-            <path
-              fill="currentColor"
-              d="M8 2a6 6 0 0 1 5.7 4.1l.9-.9a.8.8 0 1 1 1.1 1.1l-2.3 2.3a.8.8 0 0 1-1.1 0L10 6.3a.8.8 0 0 1 1.1-1.1l1 1A4.4 4.4 0 0 0 8 3.6 4.4 4.4 0 0 0 3.6 8 .8.8 0 1 1 2 8a6 6 0 0 1 6-6Zm-4.4 7.6 2.3 2.3a.8.8 0 0 1-1.1 1.1l-1-1A4.4 4.4 0 0 0 8 12.4 4.4 4.4 0 0 0 12.4 8a.8.8 0 1 1 1.6 0 6 6 0 0 1-10.4 4.1l-.9.9a.8.8 0 0 1-1.1-1.1l.8-.8Z"
-            />
-          </svg>
-        </button>
-        <button
-          v-if="canRelogin"
-          class="icon-btn"
-          :class="{ 'relogin-busy': relogging }"
-          type="button"
-          :title="reloginTitle"
-          :disabled="relogging"
-          @click="emit('relogin', row.accountId)"
-        >
-          <!-- 用"钥匙"图标和旁边那个"刷新箭头"区分开，避免用户点错 -->
-          <svg class="ico" :class="{ spin: relogging }" viewBox="0 0 16 16" width="14" height="14">
-            <path
-              fill="currentColor"
-              d="M10.5 1a4.5 4.5 0 0 0-4.35 3.4L1.5 9.05A1 1 0 0 0 1.2 9.7v3.1c0 .44.36.8.8.8h3.1a1 1 0 0 0 .7-.29l1.2-1.2h1.3a.8.8 0 0 0 .8-.8v-1.3l.85-.85A4.5 4.5 0 1 0 10.5 1Zm1.6 3.9a1.2 1.2 0 1 1 0-2.4 1.2 1.2 0 0 1 0 2.4Z"
             />
           </svg>
         </button>
@@ -737,6 +720,80 @@ onBeforeUnmount(() => {
 
 .card.disabled::before {
   display: none;
+}
+
+/* ---------- 需要登录：卡片里的大号「点击登录」框 ----------
+   取代了以前的 🔑「重新登录」和 ↻「续期登录」两个小图标按钮：
+   一个按钮，点下去先自动续期、续不上才开登录页（逻辑见 App.vue onRelogin）。 */
+.card.need-login {
+  background: var(--panel2);
+  border-color: color-mix(in srgb, var(--warn) 42%, var(--line));
+}
+
+.card.need-login::before {
+  background: var(--warn);
+}
+
+.login-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 4px 0 2px;
+}
+
+.login-big {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  min-height: 84px;
+  padding: 14px 16px;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  border: 1px dashed color-mix(in srgb, var(--card-acc, var(--warn)) 55%, var(--line));
+  background: color-mix(in srgb, var(--card-acc, var(--warn)) 12%, transparent);
+  color: var(--tx);
+  text-align: center;
+  transition: background 0.16s ease, border-color 0.16s ease, transform 0.16s ease;
+}
+
+.login-big:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--card-acc, var(--warn)) 20%, transparent);
+  border-color: var(--card-acc, var(--warn));
+  transform: translateY(-1px);
+}
+
+.login-big:disabled {
+  cursor: default;
+  opacity: 0.75;
+}
+
+.login-big-text {
+  font-size: var(--fs-title);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.login-big-sub {
+  font-size: var(--fs-foot-sm);
+  color: var(--tx3);
+  line-height: 1.4;
+}
+
+.login-reason {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: var(--fs-foot-sm);
+  color: var(--tx3);
+}
+
+.login-reason-text {
+  min-width: 0;
+  word-break: break-all;
+  line-height: 1.45;
 }
 
 /* ---------- 套餐横板宽卡（跨两列） ----------
@@ -993,12 +1050,6 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   transition: background 0.14s ease, color 0.14s ease;
-}
-
-/* 正在「重新登录」时给个视觉提示（等用户在登录窗口里操作，可能要好一会儿） */
-.icon-btn.relogin-busy {
-  color: var(--acc);
-  background: var(--acc-soft);
 }
 
 .icon-btn:hover:not(:disabled) {

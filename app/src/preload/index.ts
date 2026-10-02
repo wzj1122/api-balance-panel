@@ -3,6 +3,7 @@ import { IPC } from '../shared/ipc'
 import type { PanelApi, RefreshPayload, AutoStartStatus } from '../shared/ipc'
 import type {
   AccountInput,
+  AccountType,
   AccountView,
   AppInfo,
   BalanceRow,
@@ -82,6 +83,16 @@ const api: PanelApi = {
   /** 一键重新登录（卡片按钮）：按账号类型打开登录窗口，成功后自动写回账号 */
   reloginAccount(id: string): Promise<{ ok: boolean; cookie?: string; error?: string; canRenew?: boolean; renewHint?: string }> {
     return ipcRenderer.invoke(IPC.ACCOUNT_RELOGIN, { id })
+  },
+
+  /** 检测某个账号是否还有「另一个方式」可添加（MiMo 余额 ⇄ TokenPlan，只读） */
+  checkAccountSibling(payload: { id: string }): Promise<{ type: AccountType | null; name: string; available: boolean; reason: string }> {
+    return ipcRenderer.invoke(IPC.ACCOUNT_SIBLING_CHECK, payload)
+  },
+
+  /** 一键添加「另一个方式」：复用该账号的登录凭据，不需要再次登录 */
+  addAccountSibling(payload: { id: string }): Promise<{ ok: boolean; id: string; name: string; type: AccountType; error?: string }> {
+    return ipcRenderer.invoke(IPC.ACCOUNT_SIBLING_ADD, payload)
   },
 
   getFx(): Promise<FxInfo> {

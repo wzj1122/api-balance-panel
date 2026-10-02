@@ -205,7 +205,34 @@ async function main() {
         out !== 'timeout' && out && out.ok === true && typeof out.cookie === 'string' && out.cookie.includes('passToken'),
         out === 'timeout' ? '' : String(out).slice(0, 140)
       )
-      await ses.clearStorageData({ storages: ['cookies', 'localstorage'] })
+      /**
+       * 注意：这里**不要**再 await 一次 ses.clearStorageData()。
+       * 实测（2026-10-03）那会让 Electron 主进程在这行直接退出：后面的检查全部不执行、
+       * 也不打印汇总（7a/7b 已 PASS，却看不到「共 N 项」）。测试用的分区在下一轮开始时
+       * 会重新清空，这里不做收尾没有任何副作用。
+       */
+    }
+
+    // ---------- 8. 续期判定（2026-10-03 P0 回归） ----------
+    /**
+     * 曾经的 bug：小米那种"没有到期时间"的账号（session cookie 没有 expirationDate、
+     * Cookie 也不是 JWT），keepalive 的判定最后落到 `Boolean(store.getSession(acc))`，
+     * 而用户那张卡 session_enc 一直是 null → 恒为 false → **永远不自动续期**，
+     * 只能手点按钮。现在判定抽成纯函数 decideRenewal，这里把它锁死。
+     */
+    {
+      const { decideRenewal } = require('./.tmp/main/query.js')
+      const now = 1000000000000
+      const H = 60 * 60 * 1000
+      const base = { lastBlindAt: 0, now, maxAgeMs: H }
+      check('8a token 剩 30 分钟 → 续', decideRenewal({ ...base, left: 30 * 60 * 1000, sessionLeft: null }).renew === true)
+      check('8b token 剩 90 分钟 → 不续', decideRenewal({ ...base, left: 90 * 60 * 1000, sessionLeft: null }).renew === false)
+      check('8c 会话剩 30 分钟 → 续', decideRenewal({ ...base, left: null, sessionLeft: 30 * 60 * 1000 }).renew === true)
+      check('8d 都读不出来 + 从没续过 → 兜底续（旧逻辑这里恒为 false）', decideRenewal({ ...base, left: null, sessionLeft: null }).renew === true)
+      check('8e 兜底续期标记 blind=true', decideRenewal({ ...base, left: null, sessionLeft: null }).blind === true)
+      check('8f 兜底续过 1 小时 → 不续（限流）', decideRenewal({ ...base, left: null, sessionLeft: null, lastBlindAt: now - H }).renew === false)
+      check('8g 兜底续过 7 小时 → 再续', decideRenewal({ ...base, left: null, sessionLeft: null, lastBlindAt: now - 7 * H }).renew === true)
+      check('8h 已知到期时间时不走兜底分支', decideRenewal({ ...base, left: 30 * 60 * 1000, sessionLeft: null }).blind === false)
     }
   } catch (e) {
     check('脚本执行未抛异常', false, e && e.stack ? e.stack : String(e))
